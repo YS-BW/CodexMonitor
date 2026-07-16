@@ -16,4 +16,4 @@ cp "$BIN_PATH/CodexMonitor" "$APP/Contents/MacOS/CodexMonitor"
 cp "$ROOT/Packaging/Info.plist" "$APP/Contents/Info.plist"
 
 codesign --force --deep --sign - "$APP"
-hdiutil create -volname "Codex Monitor" -srcfolder "$STAGING" -ov -format UDZO "$DIST/CodexMonitor-0.1.0.dmg"
+hdiutil create -volname "Codex Monitor" -srcfolder "$STAGING" -ov -format UDZO "$DIST/CodexMonitor-0.1.1.dmg"

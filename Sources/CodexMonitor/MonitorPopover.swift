@@ -44,10 +44,19 @@ struct MonitorPopover: View {
             }
         case .weeklyUsage:
             if let weekly = store.snapshot.weekly {
-                UsageCard(window: weekly)
+                UsageCard(
+                    window: weekly,
+                    isRefreshing: store.isRefreshing,
+                    onRefresh: store.snapshot.current == nil ? { Task { await store.refresh() } } : nil
+                )
             }
         case .recentSessions:
-            RecentSessionsModule(sessions: store.sessions, error: store.sessionReadError)
+            RecentSessionsModule(
+                sessions: store.sessions,
+                error: store.sessionReadError,
+                isRefreshing: store.isRefreshing,
+                onRefresh: store.snapshot.statusWindow == nil ? { Task { await store.refresh() } } : nil
+            )
         }
     }
 
@@ -135,6 +144,8 @@ private struct UsageCard: View {
 private struct RecentSessionsModule: View {
     let sessions: [CodexSession]
     let error: String?
+    var isRefreshing = false
+    var onRefresh: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -142,6 +153,14 @@ private struct RecentSessionsModule: View {
                 Text("最近会话").font(.headline)
                 Spacer()
                 Text("\(sessions.count) 个").foregroundStyle(.secondary)
+                if let onRefresh {
+                    Button(action: onRefresh) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(isRefreshing)
+                    .accessibilityLabel("刷新额度与会话")
+                }
             }
             if let error {
                 Text(error).font(.caption).foregroundStyle(.secondary)
