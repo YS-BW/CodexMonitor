@@ -16,15 +16,58 @@ struct StatusLabel: View {
 
 struct MonitorPopover: View {
     let store: MonitorStore
+    @State private var isSettingsExpanded = false
+    @Namespace private var glassNamespace
+    @AppStorage("showsRecentSessions") private var showsRecentSessions = true
+    @AppStorage("showsWeeklyUsage") private var showsWeeklyUsage = true
+    @AppStorage("showsFiveHourUsage") private var showsFiveHourUsage = true
+    @AppStorage("refreshIntervalMinutes") private var refreshIntervalMinutes = 5
 
     var body: some View {
-        ReorderableVStack(availableModules, onMove: moveModule) { module, isDragged in
-            ModuleSurface {
-                moduleContent(for: module)
+        VStack(spacing: 4) {
+            ReorderableVStack(availableModules, onMove: moveModule) { module, isDragged in
+                ModuleSurface {
+                    moduleContent(for: module)
+                }
+                    .padding(.vertical, 6)
+                    .opacity(isDragged ? 0.92 : 1)
+                    .scaleEffect(isDragged ? 1.01 : 1)
             }
-                .padding(.vertical, 6)
-                .opacity(isDragged ? 0.92 : 1)
-                .scaleEffect(isDragged ? 1.01 : 1)
+
+            if isSettingsExpanded {
+                SettingsPanel(
+                    showsRecentSessions: $showsRecentSessions,
+                    showsWeeklyUsage: $showsWeeklyUsage,
+                    showsFiveHourUsage: $showsFiveHourUsage,
+                    refreshIntervalMinutes: $refreshIntervalMinutes
+                )
+                .glassEffectID("settings-panel", in: glassNamespace)
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
+                .zIndex(0)
+            }
+
+            HStack(spacing: 10) {
+                BottomActionButton(symbol: "arrow.clockwise", label: "刷新额度与会话") {
+                    Task { await store.refresh() }
+                }
+                .disabled(store.isRefreshing)
+
+                Spacer()
+
+                SettingsToggleButton(isExpanded: isSettingsExpanded, namespace: glassNamespace) {
+                    withAnimation(.spring(response: 0.36, dampingFraction: 0.78)) {
+                        isSettingsExpanded.toggle()
+                    }
+                }
+
+                Spacer()
+
+                BottomActionButton(symbol: "power", label: "退出 Codex Monitor") {
+                    NSApplication.shared.terminate(nil)
+                }
+            }
+            .padding(.top, 4)
+            .zIndex(1)
         }
         .disableSensoryFeedback()
         .padding(10)
@@ -36,36 +79,23 @@ struct MonitorPopover: View {
         switch module {
         case .currentUsage:
             if let current = store.snapshot.current {
-                UsageCard(
-                    window: current,
-                    isRefreshing: store.isRefreshing,
-                    onRefresh: { Task { await store.refresh() } }
-                )
+                UsageCard(window: current)
             }
         case .weeklyUsage:
             if let weekly = store.snapshot.weekly {
-                UsageCard(
-                    window: weekly,
-                    isRefreshing: store.isRefreshing,
-                    onRefresh: store.snapshot.current == nil ? { Task { await store.refresh() } } : nil
-                )
+                UsageCard(window: weekly)
             }
         case .recentSessions:
-            RecentSessionsModule(
-                sessions: store.sessions,
-                error: store.sessionReadError,
-                isRefreshing: store.isRefreshing,
-                onRefresh: store.snapshot.statusWindow == nil ? { Task { await store.refresh() } } : nil
-            )
+            RecentSessionsModule(sessions: store.sessions, error: store.sessionReadError)
         }
     }
 
     private var availableModules: [DashboardModule] {
         store.moduleOrder.filter { module in
             switch module {
-            case .currentUsage: store.snapshot.current != nil
-            case .weeklyUsage: store.snapshot.weekly != nil
-            case .recentSessions: true
+            case .currentUsage: showsFiveHourUsage && store.snapshot.current != nil
+            case .weeklyUsage: showsWeeklyUsage && store.snapshot.weekly != nil
+            case .recentSessions: showsRecentSessions
             }
         }
     }
@@ -108,8 +138,6 @@ private struct ModuleSurface<Content: View>: View {
 
 private struct UsageCard: View {
     let window: UsageWindow
-    var isRefreshing = false
-    var onRefresh: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -117,14 +145,6 @@ private struct UsageCard: View {
                 Text(window.title).fontWeight(.medium)
                 Spacer()
                 Text("剩余 \(window.remainingPercent)%").fontWeight(.medium)
-                if let onRefresh {
-                    Button(action: onRefresh) {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.glass)
-                    .disabled(isRefreshing)
-                    .accessibilityLabel("刷新额度与会话")
-                }
             }
             ProgressView(value: Double(window.remainingPercent), total: 100)
                 .progressViewStyle(.linear)
@@ -144,8 +164,6 @@ private struct UsageCard: View {
 private struct RecentSessionsModule: View {
     let sessions: [CodexSession]
     let error: String?
-    var isRefreshing = false
-    var onRefresh: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -153,14 +171,6 @@ private struct RecentSessionsModule: View {
                 Text("最近会话").font(.headline)
                 Spacer()
                 Text("\(sessions.count) 个").foregroundStyle(.secondary)
-                if let onRefresh {
-                    Button(action: onRefresh) {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.glass)
-                    .disabled(isRefreshing)
-                    .accessibilityLabel("刷新额度与会话")
-                }
             }
             if let error {
                 Text(error).font(.caption).foregroundStyle(.secondary)
@@ -180,6 +190,118 @@ private struct RecentSessionsModule: View {
                 }
             }
         }
+    }
+}
+
+private struct BottomActionButton: View {
+    let symbol: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .frame(width: 32, height: 32)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular, in: Circle())
+        .accessibilityLabel(label)
+    }
+}
+
+private struct SettingsToggleButton: View {
+    let isExpanded: Bool
+    let namespace: Namespace.ID
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("设置", systemImage: "gearshape")
+                .font(.caption.weight(.medium))
+                .frame(width: 72, height: 32)
+                .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular, in: Capsule())
+        .glassEffectID("settings-toggle", in: namespace)
+        .accessibilityLabel(isExpanded ? "收起设置" : "展开设置")
+    }
+}
+
+private struct SettingsPanel: View {
+    @Binding var showsRecentSessions: Bool
+    @Binding var showsWeeklyUsage: Bool
+    @Binding var showsFiveHourUsage: Bool
+    @Binding var refreshIntervalMinutes: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("显示模块")
+                .font(.subheadline.weight(.medium))
+
+            LazyVGrid(
+                columns: [GridItem(.flexible()), GridItem(.flexible())],
+                spacing: 8
+            ) {
+                SettingPill(title: "最近会话", symbol: "bubble.left.and.bubble.right", isSelected: showsRecentSessions) {
+                    showsRecentSessions.toggle()
+                }
+                SettingPill(title: "本周额度", symbol: "calendar", isSelected: showsWeeklyUsage) {
+                    showsWeeklyUsage.toggle()
+                }
+                SettingPill(title: "5h 额度", symbol: "clock", isSelected: showsFiveHourUsage) {
+                    showsFiveHourUsage.toggle()
+                }
+                SettingPill(
+                    title: "刷新 \(refreshIntervalLabel)",
+                    symbol: "arrow.triangle.2.circlepath",
+                    isSelected: true
+                ) {
+                    refreshIntervalMinutes = nextRefreshInterval
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var refreshIntervalLabel: String {
+        refreshIntervalMinutes == 0 ? "手动" : "\(refreshIntervalMinutes) 分钟"
+    }
+
+    private var nextRefreshInterval: Int {
+        switch refreshIntervalMinutes {
+        case 0: 5
+        case 5: 15
+        case 15: 30
+        default: 0
+        }
+    }
+
+}
+
+private struct SettingPill: View {
+    let title: String
+    let symbol: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : symbol)
+                Text(title)
+                    .lineLimit(1)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(isSelected ? .primary : .secondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 34)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular, in: Capsule())
+        .accessibilityLabel(title)
     }
 }
 

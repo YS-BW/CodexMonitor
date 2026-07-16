@@ -36,7 +36,7 @@ struct CodexUsageFetcher: Sendable {
     }
 
     private func makeCurrentWindow(_ window: RateWindow) -> UsageWindow {
-        UsageWindow(title: "当前窗口", remainingPercent: window.remainingPercent, resetsAt: window.resetDate)
+        UsageWindow(title: "5h 额度", remainingPercent: window.remainingPercent, resetsAt: window.resetDate)
     }
 
     private func makeWeeklyWindow(_ window: RateWindow) -> UsageWindow {
