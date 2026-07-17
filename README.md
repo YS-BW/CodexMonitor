@@ -1,6 +1,10 @@
 # ✨ Codex Monitor
 
 <p align="center">
+  <img src="docs/images/app-icon.png" alt="Codex Monitor 图标" width="144">
+</p>
+
+<p align="center">
   <strong>一个只存在于 macOS 菜单栏里的 Codex 用量与会话监控器。</strong><br>
   看额度、看最近会话、随时刷新，不打断工作流。
 </p>
