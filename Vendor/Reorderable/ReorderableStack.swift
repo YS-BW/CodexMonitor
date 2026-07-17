@@ -60,11 +60,6 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
   @State private var initialIndex: Data.Index? = nil
   @State private var currentIndex: Data.Index? = nil
   
-  /// The ID of the last element that switched position with the dragged element.
-  ///
-  /// This property is so that we can prevent some hysteresis from hovering over the child we just switched to.
-  @State private var lastChange: Data.Element.ID? = nil
-  
   /// The ID of the element that has just been dropped and is animating into its final position.
   ///
   /// We keep track of this so that we can adjust its Z index while its animating. Else, the element might be hidden while it animates back in place.
@@ -114,24 +109,25 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
   ///
   /// We need this since we're using the drag offset to render the element while were dragging it. The problem  is that the element changes location while we're dragging it, but the origin of the drag remains the same.
   private var positionOffset: CGFloat {
-    guard let d = dragging
+    // SwiftUI can still deliver a drag update after the data source has changed.
+    // Ignore stale indices or geometry instead of terminating the app.
+    guard let draggedID = dragging,
+          let currentIndex = data.firstIndex(where: { $0.id == draggedID }),
+          let initialIndex
     else {
-      return 0;
+      return 0
     }
-    let currentIndex = data.firstIndex(where: { $0.id == d })
 
-    if (currentIndex! > initialIndex!) {
-      return data[initialIndex!..<currentIndex!].map {
-        positionIsValid($0.id) ?
-        positions[$0.id]!.span :
-        0.0
-      }.reduce(0.0, -)
-    } else if (currentIndex! < initialIndex!) {
-      return data[currentIndex! + 1 ... initialIndex!].map {
-        positionIsValid($0.id) ?
-        positions[$0.id]!.span :
-        0.0
-      }.reduce(0.0, +)
+    if currentIndex > initialIndex {
+      return data[initialIndex..<currentIndex].map { datum in
+        guard positionIsValid(datum.id), let position = positions[datum.id] else { return 0 }
+        return position.span
+      }.reduce(0, -)
+    } else if currentIndex < initialIndex {
+      return data[currentIndex + 1...initialIndex].map { datum in
+        guard positionIsValid(datum.id), let position = positions[datum.id] else { return 0 }
+        return position.span
+      }.reduce(0, +)
     }
     
     return 0.0
@@ -246,50 +242,31 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
     edgeCheck(stackDrag, scrollDrag)
   }
   
-  /// Checks whether the given position intersects with any elements and switch its position with the dragged element if so.
-  private func checkIntersection(position: CGFloat, dragged: Data.Element.ID?) {
-    guard let datumId = dragged else { return }
-    let intersect = positions.first(where: {
-      positionIsValid($0.key) &&
-        $0.value.contains(position) &&
-        $0.key != datumId
-    })
-    
-    guard let element = intersect
-    else {
-      lastChange = nil
-      return
-    }
-
-    if (lastChange == element.key && notAtOtherEdge(currentIndex: currentIndex!, element: element, position: position)) {
-      return
-    } else {
-      lastChange = element.key
-    }
-    
-    onMove(currentIndex!, data.firstIndex(where: { $0.id == element.key })!)
-    
-    currentIndex = data.firstIndex(where: { $0.id == element.key })!
-  }
-  
-  /// Whether the user is currently hovering over the opposite side (i.e. the bottom edge of the element below or the top edge of the element above) of the given element.
+  /// Moves across the immediately adjacent element once its midpoint is crossed.
   ///
-  /// This is to help with the hysteresis cases where the user wants to switch back to the position the element was even though that they're still hovering over the previous element after changing spot.
-  private func notAtOtherEdge(currentIndex: Int, element: (key: Data.Element.ID, value: Axis.Position), position: CGFloat) -> Bool {
-    let edgeBumperSize = 64.0
-    
-    let otherIndex = data.firstIndex(where: { $0.id == element.key})!
-    if (currentIndex > otherIndex) {
-      if (position < element.value.min + edgeBumperSize && position > element.value.min) {
-        return false
-      }
-    } else {
-      if (position > element.value.max - edgeBumperSize && position < element.value.max) {
-        return false
-      }
-    }
-    
-    return true
+  /// Looking up the first intersecting item in `positions` is unreliable while
+  /// SwiftUI is animating a reorder: dictionary order is undefined and adjacent
+  /// frames can temporarily overlap. Following the drag direction gives us one
+  /// deterministic target and avoids the previous reverse-drag requirement.
+  private func checkIntersection(position: CGFloat, dragged: Data.Element.ID?) {
+    guard let draggedID = dragged,
+          let activeIndex = data.firstIndex(where: { $0.id == draggedID }),
+          abs(displayOffset) > 1
+    else { return }
+
+    let movingDown = displayOffset > 0
+    let targetIndex = movingDown ? activeIndex + 1 : activeIndex - 1
+    guard data.indices.contains(targetIndex) else { return }
+
+    let target = data[targetIndex]
+    guard positionIsValid(target.id), let targetPosition = positions[target.id] else { return }
+
+    let midpoint = (targetPosition.min + targetPosition.max) / 2
+    let crossedMidpoint = movingDown ? position >= midpoint : position <= midpoint
+    guard crossedMidpoint else { return }
+
+    onMove(activeIndex, targetIndex)
+    currentIndex = targetIndex
   }
   
   private func dropCallback(_ drag: DragGesture.Value, _ datum: Data.Element) {
@@ -298,7 +275,6 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
     
     withAnimation {
       pendingDrop = dragging
-      lastChange = nil
       dragging = nil
       displayOffset = 0
       currentIndex = nil

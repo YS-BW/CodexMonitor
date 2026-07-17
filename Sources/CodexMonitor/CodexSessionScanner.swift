@@ -22,14 +22,15 @@ struct CodexSessionScanner: Sendable {
                 results.append(CodexSession(
                     id: metadata.id,
                     title: readFirstUserMessage(from: file) ?? project,
-                    preview: readLastUserMessage(from: file) ?? "暂无可显示的对话内容",
                     source: metadata.source,
+                    tokensUsed: 0,
+                    goalStatus: nil,
                     lastActivityAt: modifiedAt,
                     isActive: now.timeIntervalSince(modifiedAt) < 120
                 ))
             }
         }
-        let titles = CodexThreadTitleReader().titles(for: results.map(\.id))
+        let metadata = CodexThreadTitleReader().metadata(for: results.map(\.id))
         var seen = Set<String>()
         return results
             .sorted { $0.lastActivityAt > $1.lastActivityAt }
@@ -38,9 +39,10 @@ struct CodexSessionScanner: Sendable {
             .map { session in
                 CodexSession(
                     id: session.id,
-                    title: titles[session.id] ?? session.title,
-                    preview: session.preview,
+                    title: metadata[session.id]?.title ?? session.title,
                     source: session.source,
+                    tokensUsed: metadata[session.id]?.tokensUsed ?? 0,
+                    goalStatus: metadata[session.id]?.goalStatus,
                     lastActivityAt: session.lastActivityAt,
                     isActive: session.isActive
                 )
@@ -65,27 +67,13 @@ struct CodexSessionScanner: Sendable {
         return (id, payload["cwd"] as? String, source)
     }
 
-    private func readLastUserMessage(from file: URL) -> String? {
-        readUserMessage(from: file, preferLast: true)
-    }
-
     private func readFirstUserMessage(from file: URL) -> String? {
-        readUserMessage(from: file, preferLast: false)
-    }
-
-    private func readUserMessage(from file: URL, preferLast: Bool) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
         defer { try? handle.close() }
-
-        let size = (try? handle.seekToEnd()) ?? 0
-        let start = preferLast && size > 512 * 1024 ? size - 512 * 1024 : 0
-        try? handle.seek(toOffset: start)
-        guard let data = preferLast ? (try? handle.readToEnd()) : (try? handle.read(upToCount: 512 * 1024)),
+        guard let data = try? handle.read(upToCount: 512 * 1024),
               let text = String(data: data, encoding: .utf8) else { return nil }
 
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-        let orderedLines = preferLast ? Array(lines.reversed()) : lines
-        for line in orderedLines {
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let object = try? JSONSerialization.jsonObject(with: Data(String(line).utf8)) as? [String: Any],
                   object["type"] as? String == "response_item",
                   let payload = object["payload"] as? [String: Any],
@@ -93,16 +81,14 @@ struct CodexSessionScanner: Sendable {
                   payload["role"] as? String == "user",
                   let content = payload["content"] as? [[String: Any]] else { continue }
 
-            let message: String = content
+            let message = content
                 .filter { ($0["type"] as? String) == "input_text" }
                 .compactMap { $0["text"] as? String }
                 .joined(separator: " ")
-                .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-
-            guard !message.isEmpty,
-                  !message.hasPrefix("<") else { continue }
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !message.isEmpty, !message.hasPrefix("<") else { continue }
             return message
-                .replacingOccurrences(of: "\\s+", with: " ", options: String.CompareOptions.regularExpression)
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
                 .prefix(90)
                 .description
         }
