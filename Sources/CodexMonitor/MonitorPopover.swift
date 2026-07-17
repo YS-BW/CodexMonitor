@@ -17,19 +17,21 @@ struct StatusLabel: View {
 struct MonitorPopover: View {
     let store: MonitorStore
     @State private var isSettingsExpanded = false
-    @Namespace private var glassNamespace
     @AppStorage("showsRecentSessions") private var showsRecentSessions = true
     @AppStorage("showsWeeklyUsage") private var showsWeeklyUsage = true
     @AppStorage("showsFiveHourUsage") private var showsFiveHourUsage = true
     @AppStorage("refreshIntervalMinutes") private var refreshIntervalMinutes = 5
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 0) {
             ReorderableVStack(availableModules, onMove: moveModule) { module, isDragged in
-                ModuleSurface {
+                ModuleSurface(
+                    isDragging: isDragged,
+                    showsDivider: module != availableModules.last
+                ) {
                     moduleContent(for: module)
                 }
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 0)
                     .opacity(isDragged ? 0.92 : 1)
                     .scaleEffect(isDragged ? 1.01 : 1)
             }
@@ -41,20 +43,22 @@ struct MonitorPopover: View {
                     showsFiveHourUsage: $showsFiveHourUsage,
                     refreshIntervalMinutes: $refreshIntervalMinutes
                 )
-                .glassEffectID("settings-panel", in: glassNamespace)
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
                 .zIndex(0)
             }
 
-            HStack(spacing: 10) {
-                BottomActionButton(symbol: "arrow.clockwise", label: "刷新额度与会话") {
+            Divider()
+                .padding(.horizontal, 12)
+
+            HStack(spacing: 0) {
+                BottomActionButton(symbol: "arrow.clockwise", title: "刷新") {
                     Task { await store.refresh() }
                 }
                 .disabled(store.isRefreshing)
 
                 Spacer()
 
-                SettingsToggleButton(isExpanded: isSettingsExpanded, namespace: glassNamespace) {
+                BottomActionButton(symbol: "gearshape", title: "设置") {
                     withAnimation(.spring(response: 0.36, dampingFraction: 0.78)) {
                         isSettingsExpanded.toggle()
                     }
@@ -62,15 +66,18 @@ struct MonitorPopover: View {
 
                 Spacer()
 
-                BottomActionButton(symbol: "power", label: "退出 Codex Monitor") {
+                BottomActionButton(symbol: "power", title: "关闭") {
                     NSApplication.shared.terminate(nil)
                 }
             }
-            .padding(.top, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 3)
             .zIndex(1)
         }
         .disableSensoryFeedback()
-        .padding(10)
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
         .frame(width: 330)
     }
 
@@ -125,14 +132,36 @@ private enum TrackpadHaptics {
 }
 
 private struct ModuleSurface<Content: View>: View {
+    let isDragging: Bool
+    let showsDivider: Bool
     @ViewBuilder let content: Content
+    @State private var isHovered = false
 
     var body: some View {
-        content
-            .padding(12)
+        VStack(spacing: 0) {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            if showsDivider {
+                Divider()
+                    .padding(.horizontal, 12)
+            }
+        }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(RoundedRectangle(cornerRadius: 18))
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
+            .background {
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(
+                        Color(
+                            red: 231.0 / 255.0,
+                            green: 232.0 / 255.0,
+                            blue: 234.0 / 255.0,
+                            opacity: isHovered || isDragging ? 1 : 0
+                        )
+                    )
+            }
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.16), value: isHovered || isDragging)
     }
 }
 
@@ -142,20 +171,22 @@ private struct UsageCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(window.title).fontWeight(.medium)
+                Text(window.title)
+                    .font(.headline.weight(.semibold))
                 Spacer()
-                Text("剩余 \(window.remainingPercent)%").fontWeight(.medium)
+                Text("剩余 \(window.remainingPercent)%")
+                    .font(.headline.weight(.semibold))
+                    .fontDesign(.rounded)
             }
             ProgressView(value: Double(window.remainingPercent), total: 100)
                 .progressViewStyle(.linear)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 7)
-                .glassEffect(.regular, in: Capsule())
+                .tint(.blue)
+                .padding(.vertical, 2)
             HStack(spacing: 3) {
                 Text(window.resetsAt, style: .relative)
                 Text("后重置")
             }
-            .font(.caption)
+            .font(.footnote)
             .foregroundStyle(.secondary)
         }
     }
@@ -168,9 +199,11 @@ private struct RecentSessionsModule: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("最近会话").font(.headline)
+                Text("最近会话").font(.headline.weight(.semibold))
                 Spacer()
-                Text("\(sessions.count) 个").foregroundStyle(.secondary)
+                Text("\(sessions.count) 个")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             if let error {
                 Text(error).font(.caption).foregroundStyle(.secondary)
@@ -178,13 +211,12 @@ private struct RecentSessionsModule: View {
                 Text("尚未发现最近 7 天的本地 Codex 会话。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(10)
-                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14))
             } else {
-                GlassEffectContainer(spacing: 10) {
-                    VStack(spacing: 8) {
-                        ForEach(sessions) { session in
-                            SessionRow(session: session)
+                VStack(spacing: 0) {
+                    ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                        SessionRow(session: session)
+                        if index < sessions.count - 1 {
+                            Divider()
                         }
                     }
                 }
@@ -195,36 +227,21 @@ private struct RecentSessionsModule: View {
 
 private struct BottomActionButton: View {
     let symbol: String
-    let label: String
+    let title: String
     let action: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .frame(width: 32, height: 32)
+            Label(title, systemImage: symbol)
+                .font(.footnote.weight(.medium))
+                .frame(height: 26)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular, in: Circle())
-        .accessibilityLabel(label)
-    }
-}
-
-private struct SettingsToggleButton: View {
-    let isExpanded: Bool
-    let namespace: Namespace.ID
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label("设置", systemImage: "gearshape")
-                .font(.caption.weight(.medium))
-                .frame(width: 72, height: 32)
-                .fixedSize()
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular, in: Capsule())
-        .glassEffectID("settings-toggle", in: namespace)
-        .accessibilityLabel(isExpanded ? "收起设置" : "展开设置")
+        .background(RoundedRectangle(cornerRadius: 9).fill(.primary.opacity(isHovered ? 0.08 : 0)))
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .accessibilityLabel(title)
     }
 }
 
@@ -237,7 +254,7 @@ private struct SettingsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("显示模块")
-                .font(.subheadline.weight(.medium))
+                .font(.footnote.weight(.medium))
 
             LazyVGrid(
                 columns: [GridItem(.flexible()), GridItem(.flexible())],
@@ -263,7 +280,6 @@ private struct SettingsPanel: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
     }
 
     private var refreshIntervalLabel: String {
@@ -286,6 +302,7 @@ private struct SettingPill: View {
     let symbol: String
     let isSelected: Bool
     let action: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
@@ -294,13 +311,15 @@ private struct SettingPill: View {
                 Text(title)
                     .lineLimit(1)
             }
-            .font(.caption.weight(.medium))
+            .font(.caption2.weight(.medium))
             .foregroundStyle(isSelected ? .primary : .secondary)
             .frame(maxWidth: .infinity)
-            .frame(height: 34)
+            .frame(height: 28)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular, in: Capsule())
+        .background(Capsule().fill(.primary.opacity(isHovered ? 0.08 : 0)))
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
         .accessibilityLabel(title)
     }
 }
@@ -312,9 +331,11 @@ private struct SessionRow: View {
         HStack(spacing: 10) {
             Circle().fill(session.isActive ? Color.green : Color.secondary).frame(width: 7, height: 7)
             VStack(alignment: .leading, spacing: 1) {
-                Text(session.title).lineLimit(1)
+                Text(session.title)
+                    .font(.subheadline)
+                    .lineLimit(1)
                 Text(session.preview)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -326,7 +347,6 @@ private struct SessionRow: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
         }
-        .padding(10)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.vertical, 9)
     }
 }
