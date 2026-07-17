@@ -18,6 +18,14 @@
 
 > ⚠️ 这是独立开源项目，与 OpenAI、ChatGPT 和 Codex 均无隶属关系。
 
+## 🖥️ 界面预览
+
+用量、最近会话与底部操作都集中在一个紧凑的菜单栏面板中。
+
+<p align="center">
+  <img src="docs/images/menu-bar-preview.png" alt="Codex Monitor 菜单栏面板预览" width="520">
+</p>
+
 ## 🚀 快速安装
 
 从 [GitHub Releases](https://github.com/YS-BW/CodexMonitor/releases) 下载最新版 `CodexMonitor-*.dmg`。
