@@ -11,6 +11,7 @@ let package = Package(
             name: "CodexMonitor",
             dependencies: ["Reorderable"],
             resources: [.copy("Resources/CatFrames")]
-        )
+        ),
+        .testTarget(name: "CodexMonitorTests", dependencies: ["CodexMonitor"])
     ]
 )
