@@ -1,147 +1,179 @@
 # ✨ Codex Monitor
 
 <p align="center">
-  <img src="docs/images/app-icon.png" alt="Codex Monitor 图标" width="144">
+  <img src="docs/images/app-icon.png" alt="Codex Monitor 图标" width="132">
 </p>
 
 <p align="center">
-<strong>一个只存在于 macOS 菜单栏里的模块化 Codex 用量与会话监控器。</strong><br>
-按你的工作方式组合额度、Token、趋势与会话，不打断工作流。
+  <strong>专为 Codex 打造的 macOS 菜单栏监控器</strong><br>
+  不打开 Codex，也能随时查看额度、Token、任务状态和最近会话。
 </p>
 
 <p align="center">
-  <a href="https://github.com/YS-BW/CodexMonitor/releases"><img alt="Release" src="https://img.shields.io/github/v/release/YS-BW/CodexMonitor?display_name=tag&sort=semver"></a>
+  <a href="https://github.com/YS-BW/CodexMonitor/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/YS-BW/CodexMonitor?display_name=tag&sort=semver"></a>
+  <a href="https://github.com/YS-BW/CodexMonitor/releases"><img alt="下载量" src="https://img.shields.io/github/downloads/YS-BW/CodexMonitor/total"></a>
   <img alt="macOS 26+" src="https://img.shields.io/badge/macOS-26%2B-000000?logo=apple">
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-required-555555?logo=apple">
-  <img alt="Swift" src="https://img.shields.io/badge/Swift-6-orange?logo=swift">
+  <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white">
 </p>
 
-> ⚠️ 这是独立开源项目，与 OpenAI、ChatGPT 和 Codex 均无隶属关系。
+> Codex Monitor 是独立开源项目，与 OpenAI、ChatGPT 或 Codex 没有隶属关系。
 
-## 🖥️ 界面预览
+## 👀 一眼看清 Codex
 
-额度、Token、趋势与最近会话都集中在一个紧凑的菜单栏面板中。
+状态栏始终保留最重要的 **额度百分比**。点击后展开紧凑面板，所有模块都可以显示、隐藏和自由排序。
 
 <p align="center">
-  <img src="docs/images/menu-bar-preview.png" alt="Codex Monitor 菜单栏面板预览" width="520">
+  <img src="docs/images/menu-bar-preview.png" alt="Codex Monitor 当前界面" width="500">
 </p>
 
-## 🚀 快速安装
+## ✨ 主要功能
 
-从 [GitHub Releases](https://github.com/YS-BW/CodexMonitor/releases) 下载最新版 `CodexMonitor-*.dmg`。
+### 🧩 真正的模块化面板
 
-1. 打开 DMG。
-2. 将 **Codex Monitor.app** 拖到 **Applications** 文件夹。
-3. 打开 App；它只显示在菜单栏，不会出现在 Dock 中。
+- 每个数据区都是独立模块，可按需要显示或隐藏。
+- 直接拖动整个模块调整顺序，相邻模块会实时让位。
+- 默认保持简洁，鼠标悬停或拖动时才显示半透明背景。
+- 原生 SwiftUI 界面，自动适配 macOS 深色与浅色模式。
 
-首次使用前，请先在 Codex 桌面 App 或 CLI 中完成 ChatGPT 登录。
+### 📊 额度与 Token
 
-> 当前安装包为临时签名、未经过 Apple 公证。如 macOS 阻止打开，请在“系统设置 → 隐私与安全性”中允许打开，或按下方常见问题处理。
+- 在菜单栏持续显示当前可用额度。
+- 支持 **5h 额度**与**本周额度**，并显示重置时间。
+- 额度充足、一般、偏低时分别使用蓝、黄、红三种进度条颜色。
+- 汇总本机 Codex 的总 Token，以及今日、本周、本月 Token 消耗。
+- 绘制最近 7 天趋势图；将鼠标精准移到数据点可查看当天用量并获得触控板反馈。
 
-## 🧩 模块化面板
+### 🏃 任务进度
 
-每一项信息都是一个独立模块：可以在设置中单独显示或隐藏，并直接拖拽整个模块调整顺序。模块静止时保持干净平面；悬停或拖拽时才出现 macOS 天气风格的背景与触控板反馈。
+- 自动识别本机正在运行和最近完成的 Codex 任务。
+- 展示会话名称、运行时间，以及**思考中 / 进行中 / 已完成**状态。
+- 有明确计划时显示当前步骤；未创建计划时不虚构进度。
+- 使用 macOS 文件事件监听本地会话变化，不靠高频轮询反复唤醒 CPU。
 
-你可以把最常看的内容放到顶部，例如把“本周额度”和“Token 消耗趋势”放在最前，或只保留最近会话。
+### 💬 最近会话
 
-## 👀 能看什么
+- 保留最近 3 个会话，显示真实标题、来源和 Token 用量。
+- 识别 **Codex App / CLI / IDE** 来源。
+- App 与 IDE 会话可直接跳回 Codex 对应页面。
+- CLI 会话可在 Terminal 或 Ghostty 中执行 `codex resume` 继续工作。
 
-| 模块 | 内容 |
+## 🧱 可用模块
+
+| 模块 | 显示内容 |
 | --- | --- |
-| ⏱️ 5h 额度 | 当账号返回短时用量窗口时，显示剩余百分比与重置时间。 |
-| 📅 本周额度 | 显示周额度剩余百分比与重置时间。 |
-| ∑ 总 Token 消耗 | 汇总本机本地 Codex 会话的累计 Token 用量。 |
-| 📈 Token 消耗趋势 | 从本地日志计算最近 7 天每天新增的 Token；显示日均、最高值，指向具体数据点可查看当天用量。 |
-| 💬 最近会话 | 显示最近 3 个本地 Codex 会话的真实标题、来源、Token 用量、Goal 状态与活跃指示灯。 |
-| ⚙️ 显示设置 | 独立开关各模块、调整刷新间隔，并选择 CLI 会话打开 Terminal 或 Ghostty。 |
+| 🏃 任务进度 | 多任务名称、运行时间、当前状态，以及存在计划时的步骤。 |
+| ⏱️ 5h 额度 | 短时额度剩余百分比与重置时间。 |
+| 📅 本周额度 | 周额度剩余百分比与重置时间。 |
+| ∑ 总 Token | 本机 Codex 日志中的累计 Token。 |
+| ☀️ 今日 Token | 当地自然日内的 Token 消耗。 |
+| 🗓️ 本周 Token | 当前自然周的 Token 消耗。 |
+| 📆 本月 Token | 当前自然月的 Token 消耗。 |
+| 📈 Token 趋势 | 最近 7 天每日消耗、本周总量、日均与峰值。 |
+| 💬 最近会话 | 最近 3 个会话的标题、来源、Token 与活跃指示灯。 |
 
-## ↕️ 拖拽排序
+设置区采用横向滑动，模块再多也不会把面板无限撑长。刷新频率可选 **手动、1、5、15 或 30 分钟**。
 
-直接按住任意模块内容上下拖动。越过相邻模块的中心线后，它会立即让位；模块高度不同也能连续排序，不需要先反方向拖动。
+## 🚀 安装
 
-## 🧭 使用方式
+1. 前往 [Releases](https://github.com/YS-BW/CodexMonitor/releases/latest) 下载最新版 `CodexMonitor-*.dmg`。
+2. 打开 DMG，将 **Codex Monitor.app** 拖入 **Applications**。
+3. 启动 App。它只出现在菜单栏，不占用 Dock。
 
-- 菜单栏会显示当前可用额度；若只有周额度，显示周额度剩余值。
-- 点击菜单栏图标打开面板。
-- 底部提供 **刷新**、**设置** 和 **关闭** 操作。
-- 刷新只读取本地登录态与用量信息，**不会消耗 Codex 额度**。
-- 点击 App 或 IDE 来源的会话，会在 Codex 桌面端打开对应线程。
-- 点击 CLI 来源的会话，会在设置中选定的 **Terminal** 或 **Ghostty** 新窗口执行 `codex resume <thread-id>`，继续该会话。
+首次使用前，请先在 Codex App 或 Codex CLI 中通过 ChatGPT 账号完成登录。**不需要 OpenAI API Key。**
 
-不同套餐和账号返回的用量窗口不完全相同；没有返回的模块会自动隐藏。
+> 当前安装包使用临时签名，尚未经过 Apple 公证。如果 macOS 阻止打开，请在“系统设置 → 隐私与安全性”中选择仍要打开。
 
 ## 🔐 数据与隐私
 
-Codex Monitor 不需要 OpenAI API Key，也不会把你的数据发送到第三方服务。
+所有会话、任务和 Token 统计都在本机完成。Codex Monitor 不会上传你的会话内容，也不会把登录令牌发送给第三方。
 
-它在本机读取以下 Codex 数据，并仅用本机已有的 ChatGPT 登录令牌请求官方 ChatGPT 域名的用量信息：
+| 本地数据 | 用途 |
+| --- | --- |
+| `~/.codex/auth.json` | 使用现有 ChatGPT 登录态，从官方 ChatGPT 服务查询额度。 |
+| `~/.codex/sessions/` | 识别任务状态、会话来源和 Token 事件。 |
+| `~/.codex/state_5.sqlite` | 读取 Codex 中的真实会话标题与线程信息。 |
+| `~/.codex/goals_1.sqlite` | 在本地存在 Goal 数据时读取其状态。 |
 
-- `~/.codex/auth.json`：读取已登录的访问令牌与账号标识，用于查询用量。
-- `~/.codex/sessions/`：读取本地会话日志，用于最近会话、来源判断与每日 Token 趋势。
-- `~/.codex/state_5.sqlite`：读取 Codex 侧边栏中的真实会话标题与累计 Token。
-- `~/.codex/goals_1.sqlite`：读取本地线程的 Goal 状态。
+刷新额度只是查询已有用量，**不会发起 Codex 推理，也不会消耗额度**。
 
-不会显示、上传或写回你的令牌内容。所有会话和 Token 数据仅在本机 UI 中处理。
+## ⚡ 性能设计
+
+- 启动时先显示上次缓存的额度，避免状态栏长时间出现空值。
+- 额度与最近会话优先刷新，较重的 Token 汇总在后台完成。
+- Token 扫描采用文件级增量缓存，只重新解析发生变化的日志。
+- 任务状态通过 FSEvents 响应本地日志变化，不设置秒级轮询。
 
 ## ✅ 系统要求
 
 - macOS 26 或更高版本
 - Apple Silicon Mac
-- 已登录的 Codex 桌面 App 或 Codex CLI
-- ChatGPT Plus / 支持 Codex 用量查询的账号
+- 已登录 Codex App 或 Codex CLI
+- ChatGPT Plus，或其他支持 Codex 用量查询的账号
 
 ## ❓ 常见问题
 
-### 没有显示额度
+<details>
+<summary><strong>为什么没有显示额度？</strong></summary>
 
-确认当前 Mac 已在 Codex 中登录。然后点击底部的 **刷新**。如果账号没有返回某个额度窗口，对应模块会自动隐藏。
+确认这台 Mac 已在 Codex 中登录，再点击底部的“刷新”。不同账号返回的额度窗口可能不同，没有返回的数据模块会自动隐藏。
+</details>
 
-### 最近会话为空或标题不对
+<details>
+<summary><strong>为什么另一台 Mac 看不到原来的会话和 Token？</strong></summary>
 
-最近会话来自本机 `~/.codex` 数据；另一台 Mac 不会自动拥有这台 Mac 的历史会话。标题优先读取 Codex 本地线程索引，旧会话缺少索引时会回退到首条用户消息。
+这些信息来自当前电脑的 `~/.codex` 本地数据。Codex Monitor 不会跨设备同步日志，因此另一台 Mac 只能统计它本机已有的会话。
+</details>
 
-### 点击 CLI 会话没有打开 Ghostty / Terminal
+<details>
+<summary><strong>为什么 CLI 会话没有在 Ghostty 中打开？</strong></summary>
 
-在设置中选择 CLI 会话的打开方式。首次使用时，macOS 可能询问是否允许 Codex Monitor 控制终端应用；允许后即可在新窗口恢复对应的 CLI 会话。若选择 Ghostty 但未安装，应用会自动使用 Terminal。
+在设置中选择 CLI 打开方式。首次调用时，macOS 可能要求允许 Codex Monitor 控制终端应用；如果没有安装 Ghostty，会自动回退到 Terminal。
+</details>
 
-### macOS 提示“无法打开”或“已损坏”
+<details>
+<summary><strong>macOS 提示 App“已损坏”或无法打开怎么办？</strong></summary>
 
-未公证的临时签名应用可能被 Gatekeeper 拦截。确认下载来源可信后，可在终端执行：
+确认 DMG 来自本仓库的 Releases 后，在终端执行：
 
 ```bash
 xattr -rd com.apple.quarantine /Applications/Codex\ Monitor.app
 ```
 
 然后重新打开 App。
+</details>
 
 ## 🛠️ 本地开发
 
 ```bash
-# 调试运行
-swift run
-
-# 构建与检查
+# 调试构建
 swift build
+
+# 直接运行
+swift run
 
 # 生成带拖拽安装界面的 DMG
 scripts/package-dmg.sh
 ```
 
-主要目录：
+项目结构：
 
 ```text
-Sources/CodexMonitor/   SwiftUI 菜单栏应用
-Vendor/Reorderable/     拖拽排序依赖（MIT License）
+Sources/CodexMonitor/   App、数据读取与本地事件监听
+Vendor/Reorderable/     模块拖拽排序组件（MIT）
 Packaging/              App Bundle 配置
-scripts/                图标与 DMG 安装器生成脚本
+scripts/                图标、宣传图与 DMG 构建脚本
+docs/images/            README 与项目展示图片
 ```
 
-## 🧩 已知限制
+第三方组件许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-- 用量数据依赖 Codex 本地登录文件与当前 ChatGPT 用量接口；官方格式变动后可能需要适配。
-- 目前仅提供 Apple Silicon 构建。
-- 当前版本未进行 Apple 公证。
+## 🗺️ 当前限制
 
-## 💬 反馈
+- 用量查询依赖 Codex 当前的本地登录格式和 ChatGPT 用量接口；上游格式变化时可能需要适配。
+- 当前 Release 仅提供 Apple Silicon 构建。
+- 安装包尚未使用 Apple Developer ID 公证。
 
-欢迎通过 [Issues](https://github.com/YS-BW/CodexMonitor/issues) 提交问题、设计建议或功能请求。喜欢的话，也欢迎点一个 Star ⭐️
+## 💬 反馈与贡献
+
+欢迎通过 [Issues](https://github.com/YS-BW/CodexMonitor/issues) 报告问题或提出建议。觉得有用，也欢迎点一个 Star ⭐️

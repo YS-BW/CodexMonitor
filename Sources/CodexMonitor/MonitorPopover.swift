@@ -11,17 +11,23 @@ struct StatusLabel: View {
             Image(systemName: "sparkles")
             Text(snapshot.statusWindow.map { "\($0.remainingPercent)%" } ?? "—")
         }
-        .accessibilityLabel(snapshot.statusWindow.map { "Codex 额度剩余 \($0.remainingPercent)%" } ?? "Codex 额度暂不可用")
+        .accessibilityLabel(snapshot.statusWindow.map {
+            "Codex 额度剩余 \($0.remainingPercent)%"
+        } ?? "Codex 额度暂不可用")
     }
 }
 
 struct MonitorPopover: View {
     let store: MonitorStore
     @State private var isSettingsExpanded = false
+    @AppStorage("showsTaskProgress") private var showsTaskProgress = true
     @AppStorage("showsRecentSessions") private var showsRecentSessions = true
     @AppStorage("showsWeeklyUsage") private var showsWeeklyUsage = true
     @AppStorage("showsFiveHourUsage") private var showsFiveHourUsage = true
     @AppStorage("showsTotalTokens") private var showsTotalTokens = true
+    @AppStorage("showsDailyTokens") private var showsDailyTokens = true
+    @AppStorage("showsWeeklyTokens") private var showsWeeklyTokens = true
+    @AppStorage("showsMonthlyTokens") private var showsMonthlyTokens = true
     @AppStorage("showsTokenTrend") private var showsTokenTrend = true
     @AppStorage("refreshIntervalMinutes") private var refreshIntervalMinutes = 5
     @AppStorage("cliTerminal") private var cliTerminal = CLITerminal.terminal.rawValue
@@ -36,16 +42,19 @@ struct MonitorPopover: View {
                     moduleContent(for: module)
                 }
                     .padding(.vertical, 0)
-                    .opacity(isDragged ? 0.92 : 1)
-                    .scaleEffect(isDragged ? 1.01 : 1)
+                    .opacity(isDragged ? 0.96 : 1)
             }
 
             if isSettingsExpanded {
                 SettingsPanel(
+                    showsTaskProgress: $showsTaskProgress,
                     showsRecentSessions: $showsRecentSessions,
                     showsWeeklyUsage: $showsWeeklyUsage,
                     showsFiveHourUsage: $showsFiveHourUsage,
                     showsTotalTokens: $showsTotalTokens,
+                    showsDailyTokens: $showsDailyTokens,
+                    showsWeeklyTokens: $showsWeeklyTokens,
+                    showsMonthlyTokens: $showsMonthlyTokens,
                     showsTokenTrend: $showsTokenTrend,
                     cliTerminal: $cliTerminal,
                     refreshIntervalMinutes: $refreshIntervalMinutes
@@ -82,11 +91,25 @@ struct MonitorPopover: View {
         .padding(.top, 8)
         .padding(.bottom, 4)
         .frame(width: 330)
+        .onAppear {
+            store.setRefreshInterval(refreshIntervalMinutes)
+        }
+        .onDisappear {
+            isSettingsExpanded = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            isSettingsExpanded = false
+        }
+        .onChange(of: refreshIntervalMinutes) { _, newValue in
+            store.setRefreshInterval(newValue)
+        }
     }
 
     @ViewBuilder
     private func moduleContent(for module: DashboardModule) -> some View {
         switch module {
+        case .taskProgress:
+            TaskProgressModule(progresses: store.taskProgresses)
         case .currentUsage:
             if let current = store.snapshot.current {
                 UsageCard(window: current)
@@ -97,8 +120,14 @@ struct MonitorPopover: View {
             }
         case .totalTokens:
             TotalTokensModule(summary: store.tokenSummary)
+        case .dailyTokens:
+            PeriodTokensModule(title: "今日 Token 消耗", subtitle: "今天", tokens: store.tokenPeriods.todayTokens)
+        case .weeklyTokens:
+            PeriodTokensModule(title: "本周 Token 消耗", subtitle: "本周", tokens: store.tokenPeriods.weekTokens)
+        case .monthlyTokens:
+            PeriodTokensModule(title: "本月 Token 消耗", subtitle: "本月", tokens: store.tokenPeriods.monthTokens)
         case .tokenTrend:
-            TokenTrendModule(trend: store.tokenTrend)
+            TokenTrendModule(trend: store.tokenTrend, weekTokens: store.tokenPeriods.weekTokens)
         case .recentSessions:
             RecentSessionsModule(
                 sessions: store.sessions,
@@ -111,9 +140,13 @@ struct MonitorPopover: View {
     private var availableModules: [DashboardModule] {
         store.moduleOrder.filter { module in
             switch module {
+            case .taskProgress: showsTaskProgress
             case .currentUsage: showsFiveHourUsage && store.snapshot.current != nil
             case .weeklyUsage: showsWeeklyUsage && store.snapshot.weekly != nil
             case .totalTokens: showsTotalTokens
+            case .dailyTokens: showsDailyTokens
+            case .weeklyTokens: showsWeeklyTokens
+            case .monthlyTokens: showsMonthlyTokens
             case .tokenTrend: showsTokenTrend
             case .recentSessions: showsRecentSessions
             }
@@ -130,7 +163,7 @@ struct MonitorPopover: View {
 
         var iterator = reorderedVisibleModules.makeIterator()
         TrackpadHaptics.alignment()
-        withAnimation(.snappy) {
+        withAnimation(.easeOut(duration: 0.14)) {
             store.moduleOrder = store.moduleOrder.map { module in
                 reorderedVisibleModules.contains(module) ? iterator.next()! : module
             }
@@ -158,7 +191,10 @@ private struct ModuleSurface<Content: View>: View {
                 .padding(.vertical, 8)
                 .background {
                     RoundedRectangle(cornerRadius: 18)
-                        .fill(WeatherPalette.highlight(for: colorScheme).opacity(isHovered || isDragging ? 1 : 0))
+                        .fill(
+                            WeatherPalette.highlight(for: colorScheme)
+                                .opacity(isHovered || isDragging ? 0.64 : 0)
+                        )
                 }
                 .padding(.horizontal, 4)
                 .padding(.vertical, 6)
@@ -185,7 +221,7 @@ private enum WeatherPalette {
     }
 
     static func actionBackground(for colorScheme: ColorScheme) -> Color {
-        highlight(for: colorScheme).opacity(colorScheme == .dark ? 1 : 0.78)
+        highlight(for: colorScheme).opacity(colorScheme == .dark ? 0.56 : 0.42)
     }
 }
 
@@ -202,10 +238,20 @@ private struct UsageCard: View {
                     .font(.headline.weight(.semibold))
                     .fontDesign(.rounded)
             }
-            ProgressView(value: Double(window.remainingPercent), total: 100)
-                .progressViewStyle(.linear)
-                .tint(progressColor)
-                .padding(.vertical, 2)
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.16))
+                    Capsule()
+                        .fill(progressColor)
+                        .frame(width: proxy.size.width * Double(window.remainingPercent) / 100)
+                }
+            }
+            .frame(height: 8)
+            .padding(.vertical, 2)
+            .accessibilityElement()
+            .accessibilityLabel("额度剩余")
+            .accessibilityValue("\(window.remainingPercent)%")
             HStack(spacing: 3) {
                 Text(window.resetsAt, style: .relative)
                 Text("后重置")
@@ -216,11 +262,13 @@ private struct UsageCard: View {
     }
 
     private var progressColor: Color {
-        switch window.remainingPercent {
-        case 81...100: .blue
-        case 40...80: .yellow
-        default: .red
+        if window.remainingPercent > 80 {
+            return Color(red: 0.04, green: 0.48, blue: 1.0)
         }
+        if window.remainingPercent >= 40 {
+            return Color(red: 1.0, green: 0.72, blue: 0.0)
+        }
+        return Color(red: 1.0, green: 0.23, blue: 0.19)
     }
 }
 
@@ -257,6 +305,120 @@ private struct RecentSessionsModule: View {
     }
 }
 
+private struct TaskProgressModule: View {
+    let progresses: [CodexTaskProgress]
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("任务进度")
+                        .font(.headline.weight(.semibold))
+                }
+
+                if progresses.isEmpty {
+                    Text("暂无任务")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(progresses.enumerated()), id: \.element.sessionID) { index, progress in
+                            taskRow(progress, now: context.date)
+                            if index < progresses.count - 1 {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func taskRow(_ progress: CodexTaskProgress, now: Date) -> some View {
+        let step = stepLabel(progress)
+        let activity = progress.phase.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Text(progress.title)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                Spacer(minLength: 8)
+                HStack(spacing: 7) {
+                    Text(elapsedLabel(progress, now: now))
+                    HStack(spacing: 4) {
+                        Text(statusLabel(progress))
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 7))
+                            .foregroundStyle(statusColor(progress))
+                    }
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+
+            if !activity.isEmpty || step != nil {
+                HStack(spacing: 8) {
+                    if !activity.isEmpty {
+                        Text(activity)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if let step {
+                        Text(step)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 7)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func statusLabel(_ progress: CodexTaskProgress) -> String {
+        return switch progress.state {
+        case .thinking: "思考中"
+        case .running, .waitingForApproval, .waitingForInput: "进行中"
+        case .completed, .failed, .aborted, .stalled: "已完成"
+        }
+    }
+
+    private func statusColor(_ progress: CodexTaskProgress) -> Color {
+        return switch progress.state {
+        case .running: .blue
+        case .completed: .green
+        case .thinking, .waitingForApproval, .waitingForInput: .secondary
+        case .failed, .aborted, .stalled: .green
+        }
+    }
+
+    private func stepLabel(_ progress: CodexTaskProgress) -> String? {
+        guard !progress.plan.isEmpty else { return nil }
+        if let activeIndex = progress.plan.firstIndex(where: { $0.status == .inProgress }) {
+            return "第 \(activeIndex + 1) / \(progress.plan.count) 步"
+        }
+        if progress.state == .completed {
+            return "第 \(progress.plan.count) / \(progress.plan.count) 步"
+        }
+        let nextStep = min(progress.completedPlanSteps + 1, progress.plan.count)
+        return "第 \(nextStep) / \(progress.plan.count) 步"
+    }
+
+    private func elapsedLabel(_ progress: CodexTaskProgress, now: Date) -> String {
+        let end = progress.completedAt ?? now
+        let seconds = max(0, Int(end.timeIntervalSince(progress.startedAt)))
+        if seconds < 60 { return "运行 \(seconds) 秒" }
+        if seconds < 3_600 { return "运行 \(seconds / 60) 分钟" }
+        return "运行 \(seconds / 3_600) 小时 \((seconds % 3_600) / 60) 分钟"
+    }
+}
+
 private struct TotalTokensModule: View {
     let summary: TokenSummary
 
@@ -265,7 +427,7 @@ private struct TotalTokensModule: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("总 Token 消耗")
                     .font(.headline.weight(.semibold))
-                Text("本机本地会话累计")
+                Text("本机日志累计")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -277,8 +439,31 @@ private struct TotalTokensModule: View {
     }
 }
 
+private struct PeriodTokensModule: View {
+    let title: String
+    let subtitle: String
+    let tokens: Int
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline.weight(.semibold))
+                Text(subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(tokens.tokenDisplay)
+                .font(.title3.weight(.semibold))
+                .fontDesign(.rounded)
+        }
+    }
+}
+
 private struct TokenTrendModule: View {
     let trend: TokenTrend
+    let weekTokens: Int
     @State private var selectedDay: TokenTrend.Day?
 
     var body: some View {
@@ -392,7 +577,7 @@ private struct TokenTrendModule: View {
     }
 
     private var selectedTokenLabel: String {
-        guard let selectedDay else { return "近 7 天" }
+        guard let selectedDay else { return "本周 \(weekTokens.tokenDisplay)" }
         return "\(selectedDay.tokens.tokenDisplay) tokens"
     }
 }
@@ -425,69 +610,105 @@ private struct BottomActionButton: View {
 }
 
 private struct SettingsPanel: View {
+    @Binding var showsTaskProgress: Bool
     @Binding var showsRecentSessions: Bool
     @Binding var showsWeeklyUsage: Bool
     @Binding var showsFiveHourUsage: Bool
     @Binding var showsTotalTokens: Bool
+    @Binding var showsDailyTokens: Bool
+    @Binding var showsWeeklyTokens: Bool
+    @Binding var showsMonthlyTokens: Bool
     @Binding var showsTokenTrend: Bool
     @Binding var cliTerminal: String
     @Binding var refreshIntervalMinutes: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("显示模块")
-                .font(.footnote.weight(.medium))
+        VStack(alignment: .leading, spacing: 7) {
+            settingsHeader("显示模块")
 
-            LazyVGrid(
-                columns: [GridItem(.flexible()), GridItem(.flexible())],
-                spacing: 8
-            ) {
-                SettingPill(title: "最近会话", symbol: "bubble.left.and.bubble.right", isSelected: showsRecentSessions) {
-                    showsRecentSessions.toggle()
+            ScrollView(.horizontal) {
+                HStack(spacing: 7) {
+                    SettingPill(title: "任务进度", symbol: "figure.run", isSelected: showsTaskProgress) {
+                        showsTaskProgress.toggle()
+                    }
+                    SettingPill(title: "最近会话", symbol: "bubble.left.and.bubble.right", isSelected: showsRecentSessions) {
+                        showsRecentSessions.toggle()
+                    }
+                    SettingPill(title: "本周额度", symbol: "calendar", isSelected: showsWeeklyUsage) {
+                        showsWeeklyUsage.toggle()
+                    }
+                    SettingPill(title: "5h 额度", symbol: "clock", isSelected: showsFiveHourUsage) {
+                        showsFiveHourUsage.toggle()
+                    }
+                    SettingPill(title: "总 Token", symbol: "sum", isSelected: showsTotalTokens) {
+                        showsTotalTokens.toggle()
+                    }
+                    SettingPill(title: "今日 Token", symbol: "sun.max", isSelected: showsDailyTokens) {
+                        showsDailyTokens.toggle()
+                    }
+                    SettingPill(title: "本周 Token", symbol: "calendar.day.timeline.left", isSelected: showsWeeklyTokens) {
+                        showsWeeklyTokens.toggle()
+                    }
+                    SettingPill(title: "本月 Token", symbol: "calendar", isSelected: showsMonthlyTokens) {
+                        showsMonthlyTokens.toggle()
+                    }
+                    SettingPill(title: "Token 趋势", symbol: "chart.xyaxis.line", isSelected: showsTokenTrend) {
+                        showsTokenTrend.toggle()
+                    }
                 }
-                SettingPill(title: "本周额度", symbol: "calendar", isSelected: showsWeeklyUsage) {
-                    showsWeeklyUsage.toggle()
-                }
-                SettingPill(title: "5h 额度", symbol: "clock", isSelected: showsFiveHourUsage) {
-                    showsFiveHourUsage.toggle()
-                }
-                SettingPill(title: "总 Token", symbol: "sum", isSelected: showsTotalTokens) {
-                    showsTotalTokens.toggle()
-                }
-                SettingPill(title: "Token 趋势", symbol: "chart.xyaxis.line", isSelected: showsTokenTrend) {
-                    showsTokenTrend.toggle()
-                }
-                SettingPill(
-                    title: "刷新 \(refreshIntervalLabel)",
-                    symbol: "arrow.triangle.2.circlepath",
-                    isSelected: true
-                ) {
-                    refreshIntervalMinutes = nextRefreshInterval
-                }
+                .scrollTargetLayout()
             }
+            .scrollIndicators(.hidden)
+            .scrollTargetBehavior(.viewAligned)
+            .frame(height: 30)
 
-            Text("CLI 会话打开方式")
-                .font(.footnote.weight(.medium))
+            settingsHeader("偏好设置")
 
-            HStack(spacing: 8) {
-                SettingPill(
-                    title: CLITerminal.terminal.title,
-                    symbol: "terminal",
-                    isSelected: cliTerminal == CLITerminal.terminal.rawValue
-                ) {
-                    cliTerminal = CLITerminal.terminal.rawValue
+            ScrollView(.horizontal) {
+                HStack(spacing: 7) {
+                    SettingPill(
+                        title: "刷新 \(refreshIntervalLabel)",
+                        symbol: "arrow.triangle.2.circlepath",
+                        isSelected: true,
+                        usesSelectionMark: false
+                    ) {
+                        refreshIntervalMinutes = nextRefreshInterval
+                    }
+                    SettingPill(
+                        title: "CLI · \(CLITerminal.terminal.title)",
+                        symbol: "terminal",
+                        isSelected: cliTerminal == CLITerminal.terminal.rawValue
+                    ) {
+                        cliTerminal = CLITerminal.terminal.rawValue
+                    }
+                    SettingPill(
+                        title: "CLI · \(CLITerminal.ghostty.title)",
+                        symbol: "ghost",
+                        isSelected: cliTerminal == CLITerminal.ghostty.rawValue
+                    ) {
+                        cliTerminal = CLITerminal.ghostty.rawValue
+                    }
                 }
-                SettingPill(
-                    title: CLITerminal.ghostty.title,
-                    symbol: "ghost",
-                    isSelected: cliTerminal == CLITerminal.ghostty.rawValue
-                ) {
-                    cliTerminal = CLITerminal.ghostty.rawValue
-                }
+                .scrollTargetLayout()
             }
+            .scrollIndicators(.hidden)
+            .scrollTargetBehavior(.viewAligned)
+            .frame(height: 30)
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func settingsHeader(_ title: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.footnote.weight(.medium))
+            Spacer()
+            Text("左右滑动")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     private var refreshIntervalLabel: String {
@@ -496,7 +717,8 @@ private struct SettingsPanel: View {
 
     private var nextRefreshInterval: Int {
         switch refreshIntervalMinutes {
-        case 0: 5
+        case 0: 1
+        case 1: 5
         case 5: 15
         case 15: 30
         default: 0
@@ -509,6 +731,7 @@ private struct SettingPill: View {
     let title: String
     let symbol: String
     let isSelected: Bool
+    var usesSelectionMark = true
     let action: () -> Void
     @State private var isHovered = false
     @Environment(\.colorScheme) private var colorScheme
@@ -516,13 +739,13 @@ private struct SettingPill: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : symbol)
+                Image(systemName: usesSelectionMark && isSelected ? "checkmark.circle.fill" : symbol)
                 Text(title)
                     .lineLimit(1)
             }
             .font(.caption2.weight(.medium))
             .foregroundStyle(isSelected ? .primary : .secondary)
-            .frame(maxWidth: .infinity)
+            .frame(width: 108)
             .frame(height: 28)
         }
         .buttonStyle(.plain)
@@ -538,32 +761,34 @@ private struct SessionRow: View {
     let onOpen: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                Circle().fill(session.isActive ? Color.green : Color.secondary).frame(width: 7, height: 7)
-                Text(session.title)
-                    .font(.subheadline)
-                    .lineLimit(1)
-                Spacer()
-            }
-
-            HStack(spacing: 5) {
-                Label(session.source.rawValue, systemImage: session.source.symbolName)
-                Text("·")
-                Text(session.tokensUsed.tokenDisplay + " tokens")
-                if let goalStatus = session.goalStatus {
-                    Text("·")
-                    Text(goalStatus.label)
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Circle().fill(session.isActive ? Color.green : Color.secondary).frame(width: 7, height: 7)
+                    Text(session.title)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                    Spacer()
                 }
+
+                HStack(spacing: 5) {
+                    Label(session.source.rawValue, systemImage: session.source.symbolName)
+                    Text("·")
+                    Text(session.tokensUsed.tokenDisplay + " tokens")
+                    if let goalStatus = session.goalStatus {
+                        Text("·")
+                        Text(goalStatus.label)
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 9)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onOpen)
-        .accessibilityAddTraits(.isButton)
+        .buttonStyle(.plain)
+        .accessibilityLabel("打开会话 \(session.title)")
     }
 }
 

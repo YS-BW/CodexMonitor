@@ -8,7 +8,7 @@ APP="$STAGING/Codex Monitor.app"
 ASSETS="$DIST/assets"
 ICONSET="$ASSETS/AppIcon.iconset"
 RW_DMG="$DIST/CodexMonitor-rw.dmg"
-FINAL_DMG="$DIST/CodexMonitor-0.2.0.dmg"
+FINAL_DMG="$DIST/CodexMonitor-0.3.0.dmg"
 VOLUME_NAME="Codex Monitor Installer"
 
 rm -rf "$STAGING" "$ASSETS" "$RW_DMG" "$FINAL_DMG"

@@ -76,6 +76,15 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
   
   /// This is the position of the drag in the ScrollView coordinate space. This is used to prevent some jiggling that can happen with the timer and the drag action.
   @State private var scrollViewDragLocation: CGFloat? = nil
+
+  /// Pointer-to-center offset captured when a drag starts. Using the dragged
+  /// element's center makes crossing thresholds independent of where the user
+  /// grabbed a tall or short module.
+  @State private var dragAnchorOffset: CGFloat? = nil
+
+  /// The most recent pointer position. Direction must come from the current
+  /// movement delta, not the sign of the total translation from the drag start.
+  @State private var lastDragPosition: CGFloat? = nil
   
   public var body: some View {
     ForEach(data) { datum in
@@ -164,7 +173,11 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
         scrollTask = Task { @MainActor in
           while !Task.isCancelled {
             pos.wrappedValue.scrollTo(point: Axis.asPoint(value: scrollOffset))
-            checkIntersection(position: dragPos, dragged: dragging)
+            checkIntersection(
+              position: dragPos - (dragAnchorOffset ?? 0),
+              dragged: dragging,
+              movingForward: false
+            )
             scrollOffset -= speed
             dragPos -= speed
 
@@ -187,7 +200,11 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
         scrollTask = Task { @MainActor in
           while !Task.isCancelled {
             pos.wrappedValue.scrollTo(point: Axis.asPoint(value: scrollOffset))
-            checkIntersection(position: dragPos, dragged: dragging)
+            checkIntersection(
+              position: dragPos - (dragAnchorOffset ?? 0),
+              dragged: dragging,
+              movingForward: true
+            )
             scrollOffset += speed
             dragPos += speed
 
@@ -212,6 +229,8 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
   
   private func dragCallback(_ stackDrag: DragGesture.Value, _ scrollDrag: DragGesture.Value, _ datum: Data.Element) {
 
+    let pointerPosition = Axis.project(point: stackDrag.location)
+
     if (scrollViewDragLocation == nil) {
       scrollViewDragLocation = Axis.project(point: scrollDrag.location)
     }
@@ -234,9 +253,25 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
     if (dragging == nil) {
       dragging = datum.id
       initialIndex = currentIndex
+      if let position = positions[datum.id] {
+        dragAnchorOffset = pointerPosition - (position.min + position.max) / 2
+      } else {
+        dragAnchorOffset = 0
+      }
+      lastDragPosition = pointerPosition
     }
-    
-    checkIntersection(position: Axis.project(point: stackDrag.location), dragged: datum.id)
+
+    if let previousPosition = lastDragPosition {
+      let movement = pointerPosition - previousPosition
+      if abs(movement) >= 0.25 {
+        checkIntersection(
+          position: pointerPosition - (dragAnchorOffset ?? 0),
+          dragged: datum.id,
+          movingForward: movement > 0
+        )
+      }
+    }
+    lastDragPosition = pointerPosition
     scrollViewDragLocation = Axis.project(point: scrollDrag.location)
     
     edgeCheck(stackDrag, scrollDrag)
@@ -248,21 +283,23 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
   /// SwiftUI is animating a reorder: dictionary order is undefined and adjacent
   /// frames can temporarily overlap. Following the drag direction gives us one
   /// deterministic target and avoids the previous reverse-drag requirement.
-  private func checkIntersection(position: CGFloat, dragged: Data.Element.ID?) {
+  private func checkIntersection(
+    position: CGFloat,
+    dragged: Data.Element.ID?,
+    movingForward: Bool
+  ) {
     guard let draggedID = dragged,
-          let activeIndex = data.firstIndex(where: { $0.id == draggedID }),
-          abs(displayOffset) > 1
+          let activeIndex = data.firstIndex(where: { $0.id == draggedID })
     else { return }
 
-    let movingDown = displayOffset > 0
-    let targetIndex = movingDown ? activeIndex + 1 : activeIndex - 1
+    let targetIndex = movingForward ? activeIndex + 1 : activeIndex - 1
     guard data.indices.contains(targetIndex) else { return }
 
     let target = data[targetIndex]
     guard positionIsValid(target.id), let targetPosition = positions[target.id] else { return }
 
     let midpoint = (targetPosition.min + targetPosition.max) / 2
-    let crossedMidpoint = movingDown ? position >= midpoint : position <= midpoint
+    let crossedMidpoint = movingForward ? position >= midpoint : position <= midpoint
     guard crossedMidpoint else { return }
 
     onMove(activeIndex, targetIndex)
@@ -273,11 +310,15 @@ package struct ReorderableStack<Axis: ContainerAxis, Data: RandomAccessCollectio
     scrollTask?.cancel()
     scrollTask = nil
     
-    withAnimation {
+    withAnimation(.easeOut(duration: 0.14)) {
       pendingDrop = dragging
       dragging = nil
       displayOffset = 0
       currentIndex = nil
+      initialIndex = nil
+      dragAnchorOffset = nil
+      lastDragPosition = nil
+      scrollViewDragLocation = nil
     } completion: {
       pendingDrop = nil
     }

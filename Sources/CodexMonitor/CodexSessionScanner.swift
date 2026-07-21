@@ -1,8 +1,12 @@
 import Foundation
+import SQLite3
 
 struct CodexSessionScanner: Sendable {
     func recentSessions(limit: Int = 3, now: Date = .now) async throws -> [CodexSession] {
         let home = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex"
+        if let sessions = recentSessionsFromDatabase(home: home, limit: limit, now: now) {
+            return sessions
+        }
         let root = URL(fileURLWithPath: home, isDirectory: true).appending(path: "sessions", directoryHint: .isDirectory)
         let calendar = Calendar(identifier: .gregorian)
         let formatter = DateFormatter()
@@ -49,6 +53,81 @@ struct CodexSessionScanner: Sendable {
             }
     }
 
+    /// Newer Codex builds maintain the latest thread metadata in SQLite. Reading
+    /// three indexed rows is substantially faster than reopening every JSONL log.
+    private func recentSessionsFromDatabase(home: String, limit: Int, now: Date) -> [CodexSession]? {
+        let databaseURL = URL(fileURLWithPath: home, isDirectory: true).appending(path: "state_5.sqlite")
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+              let database else { return nil }
+        defer { sqlite3_close(database) }
+
+        let sql = """
+        SELECT id, title, source, cwd, tokens_used, updated_at, rollout_path, first_user_message
+        FROM threads
+        WHERE archived = 0
+        ORDER BY updated_at DESC, id DESC
+        LIMIT ?
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else { return nil }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int(statement, 1, Int32(max(1, limit)))
+
+        var sessions: [CodexSession] = []
+        while sqlite3_step(statement) == SQLITE_ROW,
+              let idPointer = sqlite3_column_text(statement, 0) {
+            let id = String(cString: idPointer)
+            let databaseTitle = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+            let sourceText = sqlite3_column_text(statement, 2).map { String(cString: $0) } ?? ""
+            let cwd = sqlite3_column_text(statement, 3).map { String(cString: $0) } ?? ""
+            let tokens = Int(sqlite3_column_int64(statement, 4))
+            let updatedAt = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 5)))
+            let rolloutPath = sqlite3_column_text(statement, 6).map { String(cString: $0) }
+            let firstMessage = sqlite3_column_text(statement, 7).map { String(cString: $0) } ?? ""
+            let rolloutSource = rolloutPath.flatMap {
+                readMetadata(from: URL(fileURLWithPath: $0))?.source
+            }
+            let project = URL(fileURLWithPath: cwd).lastPathComponent
+            let title = [databaseTitle, firstMessage, project]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty } ?? "未命名会话"
+            sessions.append(CodexSession(
+                id: id,
+                title: title,
+                source: rolloutSource ?? source(from: sourceText),
+                tokensUsed: tokens,
+                goalStatus: nil,
+                lastActivityAt: updatedAt,
+                isActive: now.timeIntervalSince(updatedAt) < 120
+            ))
+        }
+
+        let metadata = CodexThreadTitleReader().metadata(for: sessions.map(\.id))
+        return sessions.map { session in
+            CodexSession(
+                id: session.id,
+                title: metadata[session.id]?.title ?? session.title,
+                source: session.source,
+                tokensUsed: metadata[session.id]?.tokensUsed ?? session.tokensUsed,
+                goalStatus: metadata[session.id]?.goalStatus,
+                lastActivityAt: session.lastActivityAt,
+                isActive: session.isActive
+            )
+        }
+    }
+
+    private func source(from value: String) -> CodexSession.Source {
+        let value = value.lowercased()
+        if value.contains("ide") || value.contains("vscode") || value.contains("cursor") || value.contains("zed") {
+            return .ide
+        }
+        if value.contains("cli") || value.contains("exec") { return .cli }
+        if value.contains("desktop") || value.contains("app") { return .desktopApp }
+        return .unknown
+    }
+
     private func readMetadata(from file: URL) -> (id: String, cwd: String?, source: CodexSession.Source)? {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
         defer { try? handle.close() }
@@ -81,16 +160,12 @@ struct CodexSessionScanner: Sendable {
                   payload["role"] as? String == "user",
                   let content = payload["content"] as? [[String: Any]] else { continue }
 
-            let message = content
+            let textParts = content
                 .filter { ($0["type"] as? String) == "input_text" }
                 .compactMap { $0["text"] as? String }
-                .joined(separator: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !message.isEmpty, !message.hasPrefix("<") else { continue }
-            return message
-                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-                .prefix(90)
-                .description
+            if let message = CodexDisplayText.userRequest(from: textParts) {
+                return message
+            }
         }
         return nil
     }

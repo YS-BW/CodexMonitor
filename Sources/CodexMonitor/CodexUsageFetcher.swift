@@ -6,6 +6,7 @@ struct CodexUsageFetcher: Sendable {
     func fetch() async throws -> UsageSnapshot {
         let credentials = try loadCredentials()
         var request = URLRequest(url: Self.usageURL)
+        request.timeoutInterval = 10
         request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
         if let accountID = credentials.accountID, !accountID.isEmpty {
             request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-Id")

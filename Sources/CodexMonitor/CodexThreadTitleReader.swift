@@ -11,8 +11,7 @@ struct CodexThreadTitleReader: Sendable {
     func metadata(for ids: [String]) -> [String: Metadata] {
         guard !ids.isEmpty else { return [:] }
 
-        let databaseURL = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: ".codex/state_5.sqlite")
+        let databaseURL = codexHome.appending(path: "state_5.sqlite")
         var database: OpaquePointer?
         guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
               let database else { return [:] }
@@ -37,93 +36,21 @@ struct CodexThreadTitleReader: Sendable {
             let title = sqlite3_column_text(statement, 1).map {
                 String(cString: $0).trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            let tokensUsed = Int(sqlite3_column_int64(statement, 2))
             metadata[id] = Metadata(
                 title: title?.isEmpty == false ? title : nil,
-                tokensUsed: tokensUsed,
+                tokensUsed: Int(sqlite3_column_int64(statement, 2)),
                 goalStatus: nil
             )
         }
-        return attachGoalStatuses(to: metadata, ids: ids)
+        return attachSessionIndexTitles(to: attachGoalStatuses(to: metadata, ids: ids), ids: ids)
     }
 
-    func totalTokens() -> TokenSummary {
-        let databaseURL = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: ".codex/state_5.sqlite")
-        var database: OpaquePointer?
-        guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
-              let database else { return .empty }
-        defer { sqlite3_close(database) }
-
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, "SELECT COALESCE(SUM(tokens_used), 0) FROM threads", -1, &statement, nil) == SQLITE_OK,
-              let statement else { return .empty }
-        defer { sqlite3_finalize(statement) }
-
-        guard sqlite3_step(statement) == SQLITE_ROW else { return .empty }
-        return TokenSummary(totalTokens: Int(sqlite3_column_int64(statement, 0)))
-    }
-
-    /// Builds a daily usage trend from Codex's token-count events. Each event
-    /// records the per-thread cumulative total, so only its increase is added.
-    func recentTokenTrend(days: Int = 7, now: Date = .now) -> TokenTrend {
-        let calendar = Calendar.autoupdatingCurrent
-        guard let firstDay = calendar.date(byAdding: .day, value: -(days - 1), to: calendar.startOfDay(for: now)) else {
-            return .empty
-        }
-
-        var totals = Dictionary(uniqueKeysWithValues: (0..<days).compactMap { offset -> (Date, Int)? in
-            guard let date = calendar.date(byAdding: .day, value: offset, to: firstDay) else { return nil }
-            return (date, 0)
-        })
-
-        let home = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex"
-        let root = URL(fileURLWithPath: home, isDirectory: true).appending(path: "sessions", directoryHint: .isDirectory)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy/MM/dd"
-        let fileManager = FileManager.default
-        let timestampFormatter = ISO8601DateFormatter()
-        timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        for offset in 0..<days {
-            guard let date = calendar.date(byAdding: .day, value: -offset, to: now) else { continue }
-            let folder = root.appending(path: formatter.string(from: date), directoryHint: .isDirectory)
-            guard let files = try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { continue }
-
-            for file in files where file.lastPathComponent.hasPrefix("rollout-") && file.pathExtension == "jsonl" {
-                guard let data = try? Data(contentsOf: file) else { continue }
-                var previousTotal: Int?
-
-                for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
-                    guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
-                          object["type"] as? String == "event_msg",
-                          let payload = object["payload"] as? [String: Any],
-                          payload["type"] as? String == "token_count",
-                          let info = payload["info"] as? [String: Any],
-                          let totalUsage = info["total_token_usage"] as? [String: Any],
-                          let total = totalUsage["total_tokens"] as? Int,
-                          let timestamp = object["timestamp"] as? String,
-                          let eventDate = timestampFormatter.date(from: timestamp)
-                    else { continue }
-
-                    let delta = max(0, total - (previousTotal ?? 0))
-                    previousTotal = total
-                    let day = calendar.startOfDay(for: eventDate)
-                    if totals[day] != nil {
-                        totals[day, default: 0] += delta
-                    }
-                }
-            }
-        }
-
-        let result = totals.keys.sorted().map { TokenTrend.Day(date: $0, tokens: totals[$0, default: 0]) }
-        return TokenTrend(days: result)
+    func tokenUsageReport(trendDays: Int = 7, now: Date = .now) -> TokenUsageReport {
+        CodexTokenUsageScanner().report(trendDays: trendDays, now: now)
     }
 
     private func attachGoalStatuses(to metadata: [String: Metadata], ids: [String]) -> [String: Metadata] {
-        let goalsURL = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: ".codex/goals_1.sqlite")
+        let goalsURL = codexHome.appending(path: "goals_1.sqlite")
         var database: OpaquePointer?
         guard sqlite3_open_v2(goalsURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
               let database else { return metadata }
@@ -154,5 +81,46 @@ struct CodexThreadTitleReader: Sendable {
             )
         }
         return result
+    }
+
+    /// The Codex desktop app stores user-renamed thread titles as an append-only
+    /// index. It can be newer than `state_5.sqlite`, so the last matching entry wins.
+    private func attachSessionIndexTitles(
+        to metadata: [String: Metadata],
+        ids: [String]
+    ) -> [String: Metadata] {
+        let wanted = Set(ids)
+        let indexURL = codexHome.appending(path: "session_index.jsonl")
+        guard let data = try? Data(contentsOf: indexURL) else { return metadata }
+
+        var latestNames: [String: String] = [:]
+        for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  let id = object["id"] as? String,
+                  wanted.contains(id),
+                  let name = object["thread_name"] as? String else { continue }
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                latestNames[id] = trimmed
+            }
+        }
+
+        var result = metadata
+        for id in ids {
+            guard let title = latestNames[id] else { continue }
+            let current = result[id]
+            result[id] = Metadata(
+                title: title,
+                tokensUsed: current?.tokensUsed ?? 0,
+                goalStatus: current?.goalStatus
+            )
+        }
+        return result
+    }
+
+    private var codexHome: URL {
+        let path = ProcessInfo.processInfo.environment["CODEX_HOME"]
+            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".codex").path
+        return URL(fileURLWithPath: path, isDirectory: true)
     }
 }

@@ -3,11 +3,15 @@ import AppKit
 @MainActor
 enum SessionLauncher {
     static func open(_ session: CodexSession, cliTerminal: CLITerminal) {
+        open(threadID: session.id, source: session.source, cliTerminal: cliTerminal)
+    }
+
+    static func open(threadID: String, source: CodexSession.Source, cliTerminal: CLITerminal) {
         TrackpadHaptics.alignment()
 
-        if session.source == .cli {
-            resumeCLIThread(id: session.id, in: cliTerminal)
-        } else if let url = URL(string: "codex://threads/\(session.id)") {
+        if source == .cli {
+            resumeCLIThread(id: threadID, in: cliTerminal)
+        } else if let url = URL(string: "codex://threads/\(threadID)") {
             NSWorkspace.shared.open(url)
         }
     }
@@ -17,25 +21,34 @@ enum SessionLauncher {
 
         switch terminal {
         case .terminal:
-            runAppleScript("""
+            let didOpen = runAppleScript("""
             tell application "Terminal"
                 activate
-                do script "codex resume \(id); exec zsh -l"
+                do script "/usr/bin/env zsh -lic 'exec codex resume \(id)'"
             end tell
             """)
+            if !didOpen {
+                NSWorkspace.shared.openApplication(
+                    at: URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"),
+                    configuration: .init()
+                )
+            }
         case .ghostty:
-            guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.mitchellh.ghostty") != nil else {
+            guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.mitchellh.ghostty") else {
                 resumeCLIThread(id: id, in: .terminal)
                 return
             }
-            runAppleScript("""
-            tell application "Ghostty"
-                set cfg to new surface configuration
-                set command of cfg to "shell:codex resume \(id); exec zsh -l"
-                new window with configuration cfg
-                activate
-            end tell
-            """)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = [
+                "-na", appURL.path, "--args",
+                "-e", "/usr/bin/env", "zsh", "-lic", "exec codex resume \(id)"
+            ]
+            do {
+                try process.run()
+            } catch {
+                resumeCLIThread(id: id, in: .terminal)
+            }
         }
     }
 
@@ -45,8 +58,10 @@ enum SessionLauncher {
         }
     }
 
-    private static func runAppleScript(_ source: String) {
+    @discardableResult
+    private static func runAppleScript(_ source: String) -> Bool {
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
+        return error == nil
     }
 }
