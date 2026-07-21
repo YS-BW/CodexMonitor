@@ -5,15 +5,26 @@ import AppKit
 
 struct StatusLabel: View {
     let snapshot: UsageSnapshot
+    let hasActiveTask: Bool
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: "sparkles")
+            if hasActiveTask {
+                RunningCatIcon()
+                    .frame(width: 28, height: 18)
+            } else {
+                Image(systemName: "sparkles")
+                    .frame(width: 16, height: 18)
+            }
             Text(snapshot.statusWindow.map { "\($0.remainingPercent)%" } ?? "—")
         }
-        .accessibilityLabel(snapshot.statusWindow.map {
-            "Codex 额度剩余 \($0.remainingPercent)%"
-        } ?? "Codex 额度暂不可用")
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        let quota = snapshot.statusWindow.map { "额度剩余 \($0.remainingPercent)%" }
+            ?? "额度暂不可用"
+        return hasActiveTask ? "Codex 任务运行中，\(quota)" : "Codex \(quota)"
     }
 }
 

@@ -4,6 +4,16 @@ struct CodexUsageFetcher: Sendable {
     private static let usageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
 
     func fetch() async throws -> UsageSnapshot {
+        do {
+            let snapshot = try await fetchDirectly()
+            guard snapshot.statusWindow != nil else { throw UsageError.unavailable }
+            return snapshot
+        } catch {
+            return try await CodexAppServerUsageFetcher().fetch()
+        }
+    }
+
+    private func fetchDirectly() async throws -> UsageSnapshot {
         let credentials = try loadCredentials()
         var request = URLRequest(url: Self.usageURL)
         request.timeoutInterval = 10
@@ -26,14 +36,24 @@ struct CodexUsageFetcher: Sendable {
     }
 
     private func loadCredentials() throws -> Credentials {
-        let authURL = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: ".codex/auth.json")
+        let authURL = codexHomeURL().appending(path: "auth.json")
         let data = try Data(contentsOf: authURL)
         let auth = try JSONDecoder().decode(AuthFile.self, from: data)
         guard let accessToken = auth.tokens?.accessToken, !accessToken.isEmpty else {
             throw UsageError.notSignedIn
         }
         return Credentials(accessToken: accessToken, accountID: auth.tokens?.accountID)
+    }
+
+    private func codexHomeURL() -> URL {
+        if let configuredHome = ProcessInfo.processInfo.environment["CODEX_HOME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !configuredHome.isEmpty
+        {
+            return URL(fileURLWithPath: configuredHome, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: ".codex", directoryHint: .isDirectory)
     }
 
     private func makeCurrentWindow(_ window: RateWindow) -> UsageWindow {

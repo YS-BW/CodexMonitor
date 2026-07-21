@@ -21,7 +21,7 @@
 
 ## 👀 一眼看清 Codex
 
-状态栏始终保留最重要的 **额度百分比**。点击后展开紧凑面板，所有模块都可以显示、隐藏和自由排序。
+状态栏始终保留最重要的 **额度百分比**：空闲时显示 ✨，任务思考或运行时切换为奔跑小猫。点击后展开紧凑面板，所有模块都可以显示、隐藏和自由排序。
 
 <p align="center">
   <img src="docs/images/menu-bar-preview.png" alt="Codex Monitor 当前界面" width="500">
@@ -90,7 +90,7 @@
 
 | 本地数据 | 用途 |
 | --- | --- |
-| `~/.codex/auth.json` | 使用现有 ChatGPT 登录态，从官方 ChatGPT 服务查询额度。 |
+| Codex 登录状态 | 优先使用 `~/.codex/auth.json` 快速查询；文件缺失、过期或凭据位于钥匙串时，自动通过本机 Codex 读取额度。 |
 | `~/.codex/sessions/` | 识别任务状态、会话来源和 Token 事件。 |
 | `~/.codex/state_5.sqlite` | 读取 Codex 中的真实会话标题与线程信息。 |
 | `~/.codex/goals_1.sqlite` | 在本地存在 Goal 数据时读取其状态。 |

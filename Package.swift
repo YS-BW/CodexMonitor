@@ -9,7 +9,8 @@ let package = Package(
         .target(name: "Reorderable", path: "Vendor/Reorderable", exclude: ["LICENSE"]),
         .executableTarget(
             name: "CodexMonitor",
-            dependencies: ["Reorderable"]
+            dependencies: ["Reorderable"],
+            resources: [.copy("Resources/CatFrames")]
         )
     ]
 )

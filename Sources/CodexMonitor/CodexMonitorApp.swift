@@ -46,7 +46,10 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
         button.sendAction(on: [.leftMouseUp])
 
         let hostingView = PassthroughHostingView(
-            rootView: StatusLabel(snapshot: store.snapshot)
+            rootView: StatusLabel(
+                snapshot: store.snapshot,
+                hasActiveTask: hasActiveTask
+            )
         )
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(hostingView)
@@ -89,6 +92,7 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
     private func observeStatusContent() {
         withObservationTracking {
             _ = store.snapshot.statusWindow?.remainingPercent
+            _ = store.taskProgresses.map(\.state)
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.updateStatusContent()
@@ -99,13 +103,26 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
 
     private func updateStatusContent() {
         statusHostingView?.rootView = StatusLabel(
-            snapshot: store.snapshot
+            snapshot: store.snapshot,
+            hasActiveTask: hasActiveTask
         )
 
         let quotaText = store.snapshot.statusWindow.map { "\($0.remainingPercent)%" } ?? "—"
         let font = NSFont.menuBarFont(ofSize: 0)
         let textWidth = ceil((quotaText as NSString).size(withAttributes: [.font: font]).width)
-        statusItem.length = 16 + 5 + textWidth + 8
+        let iconWidth: CGFloat = hasActiveTask ? 28 : 16
+        statusItem.length = iconWidth + 5 + textWidth + 8
+    }
+
+    private var hasActiveTask: Bool {
+        store.taskProgresses.contains { progress in
+            switch progress.state {
+            case .thinking, .running, .waitingForApproval, .waitingForInput:
+                true
+            case .completed, .failed, .aborted, .stalled:
+                false
+            }
+        }
     }
 }
 

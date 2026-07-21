@@ -8,7 +8,7 @@ APP="$STAGING/Codex Monitor.app"
 ASSETS="$DIST/assets"
 ICONSET="$ASSETS/AppIcon.iconset"
 RW_DMG="$DIST/CodexMonitor-rw.dmg"
-FINAL_DMG="$DIST/CodexMonitor-0.3.0.dmg"
+FINAL_DMG="$DIST/CodexMonitor-0.3.1.dmg"
 VOLUME_NAME="Codex Monitor Installer"
 
 rm -rf "$STAGING" "$ASSETS" "$RW_DMG" "$FINAL_DMG"
@@ -39,6 +39,11 @@ swift build -c release
 BIN_PATH="$(swift build -c release --show-bin-path)"
 cp "$BIN_PATH/CodexMonitor" "$APP/Contents/MacOS/CodexMonitor"
 cp "$ROOT/Packaging/Info.plist" "$APP/Contents/Info.plist"
+RESOURCE_BUNDLE="$BIN_PATH/CodexMonitor_CodexMonitor.bundle"
+if [[ -d "$RESOURCE_BUNDLE" ]]; then
+  cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
+fi
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 
 codesign --force --deep --sign - "$APP"
 hdiutil create -volname "$VOLUME_NAME" -srcfolder "$STAGING" -ov -format UDRW "$RW_DMG"
