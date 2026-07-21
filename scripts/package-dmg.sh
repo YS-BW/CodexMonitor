@@ -8,7 +8,7 @@ APP="$STAGING/Codex Monitor.app"
 ASSETS="$DIST/assets"
 ICONSET="$ASSETS/AppIcon.iconset"
 RW_DMG="$DIST/CodexMonitor-rw.dmg"
-FINAL_DMG="$DIST/CodexMonitor-0.3.1.dmg"
+FINAL_DMG="$DIST/CodexMonitor-0.3.2.dmg"
 VOLUME_NAME="Codex Monitor Installer"
 
 rm -rf "$STAGING" "$ASSETS" "$RW_DMG" "$FINAL_DMG"
@@ -43,6 +43,24 @@ RESOURCE_BUNDLE="$BIN_PATH/CodexMonitor_CodexMonitor.bundle"
 if [[ -d "$RESOURCE_BUNDLE" ]]; then
   cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
 fi
+COPIED_RESOURCE_BUNDLE="$APP/Contents/Resources/CodexMonitor_CodexMonitor.bundle"
+NATIVE_FRAME_DIR="$COPIED_RESOURCE_BUNDLE/Contents/Resources/CatFrames"
+FLAT_FRAME_DIR="$COPIED_RESOURCE_BUNDLE/CatFrames"
+if [[ -d "$NATIVE_FRAME_DIR" ]]; then
+  FRAME_DIR="$NATIVE_FRAME_DIR"
+elif [[ -d "$FLAT_FRAME_DIR" ]]; then
+  FRAME_DIR="$FLAT_FRAME_DIR"
+else
+  print -u2 -- "error: animation frame directory not found at $NATIVE_FRAME_DIR or $FLAT_FRAME_DIR"
+  exit 1
+fi
+for frame_index in {0..4}; do
+  frame_path="$FRAME_DIR/cat-frame-$frame_index.png"
+  if [[ ! -f "$frame_path" ]]; then
+    print -u2 -- "error: missing animation frame: $frame_path"
+    exit 1
+  fi
+done
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 
 codesign --force --deep --sign - "$APP"

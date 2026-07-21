@@ -84,11 +84,9 @@ final class RunningCatAnimationView: NSView {
 
     private static func loadFrames() -> [CGImage] {
         (0..<5).compactMap { index in
-            guard let url = Bundle.module.url(
-                forResource: "cat-frame-\(index)",
-                withExtension: "png",
-                subdirectory: "CatFrames"
-            ), let image = NSImage(contentsOf: url) else {
+            guard let url = CatFrameResourceLocator.frameURL(index: index),
+                  let image = NSImage(contentsOf: url)
+            else {
                 return nil
             }
             var rect = NSRect(origin: .zero, size: image.size)
