@@ -23,13 +23,13 @@ struct MonitorPopover: View {
     @AppStorage("showsTaskProgress") private var showsTaskProgress = true
     @AppStorage("showsRecentSessions") private var showsRecentSessions = true
     @AppStorage("showsWeeklyUsage") private var showsWeeklyUsage = true
-    @AppStorage("showsFiveHourUsage") private var showsFiveHourUsage = true
+    @AppStorage("showsFiveHourUsage") private var showsFiveHourUsage = false
     @AppStorage("showsTotalTokens") private var showsTotalTokens = true
-    @AppStorage("showsDailyTokens") private var showsDailyTokens = true
-    @AppStorage("showsWeeklyTokens") private var showsWeeklyTokens = true
-    @AppStorage("showsMonthlyTokens") private var showsMonthlyTokens = true
+    @AppStorage("showsDailyTokens") private var showsDailyTokens = false
+    @AppStorage("showsWeeklyTokens") private var showsWeeklyTokens = false
+    @AppStorage("showsMonthlyTokens") private var showsMonthlyTokens = false
     @AppStorage("showsTokenTrend") private var showsTokenTrend = true
-    @AppStorage("refreshIntervalMinutes") private var refreshIntervalMinutes = 5
+    @AppStorage("refreshIntervalMinutes") private var refreshIntervalMinutes = 1
     @AppStorage("cliTerminal") private var cliTerminal = CLITerminal.terminal.rawValue
 
     var body: some View {

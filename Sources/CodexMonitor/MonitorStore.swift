@@ -13,7 +13,10 @@ final class MonitorStore {
     private(set) var isRefreshing = false
     private(set) var sessionReadError: String?
     private(set) var quotaReadError: String?
-    var moduleOrder: [DashboardModule] = [
+    var moduleOrder: [DashboardModule] {
+        didSet { Self.saveModuleOrder(moduleOrder) }
+    }
+    private static let defaultModuleOrder: [DashboardModule] = [
         .taskProgress, .currentUsage, .weeklyUsage, .totalTokens,
         .dailyTokens, .weeklyTokens, .monthlyTokens,
         .tokenTrend, .recentSessions
@@ -24,12 +27,14 @@ final class MonitorStore {
     private let progressScanner = CodexTaskProgressScanner()
     private let sessionEventMonitor = CodexSessionEventMonitor()
     private static let snapshotCacheKey = "cachedUsageSnapshot"
+    private static let moduleOrderKey = "dashboardModuleOrder"
 
     init() {
+        moduleOrder = Self.loadModuleOrder()
         snapshot = Self.loadCachedSnapshot() ?? .empty
         Task { await refresh() }
         startProgressMonitoring()
-        let storedInterval = UserDefaults.standard.object(forKey: "refreshIntervalMinutes") as? Int ?? 5
+        let storedInterval = UserDefaults.standard.object(forKey: "refreshIntervalMinutes") as? Int ?? 1
         setRefreshInterval(storedInterval)
     }
 
@@ -120,6 +125,21 @@ final class MonitorStore {
         guard snapshot.statusWindow != nil,
               let data = try? JSONEncoder().encode(snapshot) else { return }
         UserDefaults.standard.set(data, forKey: snapshotCacheKey)
+    }
+
+    private static func loadModuleOrder() -> [DashboardModule] {
+        guard let rawOrder = UserDefaults.standard.stringArray(forKey: moduleOrderKey) else {
+            return defaultModuleOrder
+        }
+
+        let savedModules = rawOrder.compactMap(DashboardModule.init(rawValue:))
+        let missingModules = defaultModuleOrder.filter { !savedModules.contains($0) }
+        let completeOrder = savedModules + missingModules
+        return completeOrder.isEmpty ? defaultModuleOrder : completeOrder
+    }
+
+    private static func saveModuleOrder(_ order: [DashboardModule]) {
+        UserDefaults.standard.set(order.map(\.rawValue), forKey: moduleOrderKey)
     }
 
 }
