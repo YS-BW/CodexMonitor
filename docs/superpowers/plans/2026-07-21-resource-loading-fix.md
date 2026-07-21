@@ -71,15 +71,18 @@ enum CatFrameResourceLocator {
 }
 ```
 
-Build candidate frame URLs in this order and return the first readable file:
+Treat the first two entries as bundle roots, resolve their resources through
+`Bundle(url:)`, then check the direct fallback. Return the first readable regular
+file:
 
 ```text
-<mainResourceURL>/CodexMonitor_CodexMonitor.bundle/CatFrames/cat-frame-N.png
-<mainBundleURL>/CodexMonitor_CodexMonitor.bundle/CatFrames/cat-frame-N.png
+Bundle(<mainResourceURL>/CodexMonitor_CodexMonitor.bundle) / CatFrames/cat-frame-N.png
+Bundle(<mainBundleURL>/CodexMonitor_CodexMonitor.bundle) / CatFrames/cat-frame-N.png
 <mainResourceURL>/CatFrames/cat-frame-N.png
 ```
 
-Do not reference `Bundle.module`.
+This must cover both flat Swift 6.2 resource bundles and native Swift 6.4
+`Contents/Resources` bundles. Do not reference `Bundle.module`.
 
 - [ ] **Step 4: Route the animation loader through the locator**
 
@@ -126,7 +129,12 @@ Set `CFBundleShortVersionString` to `0.3.2` and `CFBundleVersion` to `8`. Change
 
 - [ ] **Step 2: Add the packaging resource invariant**
 
-Immediately after copying `CodexMonitor_CodexMonitor.bundle` into `Contents/Resources`, verify all five expected files with a loop over indexes `0` through `4`. If a file is absent, print its full path to stderr and exit nonzero before code signing.
+Immediately after copying `CodexMonitor_CodexMonitor.bundle` into
+`Contents/Resources`, select either its flat `CatFrames` directory or native
+`Contents/Resources/CatFrames` directory, then verify all five expected files
+with a loop over indexes `0` through `4`. If no supported layout exists or a
+file is absent, print its full path to stderr and exit nonzero before code
+signing.
 
 - [ ] **Step 3: Build, package, and inspect the application**
 

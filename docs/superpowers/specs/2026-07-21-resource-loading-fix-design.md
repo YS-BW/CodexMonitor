@@ -40,17 +40,20 @@ response by displaying the weekly percentage.
 ## Selected Design
 
 Introduce a small `CatFrameResourceLocator` responsible only for resolving frame
-URLs. It will inspect these layouts in order:
+URLs. It will inspect these locations in order:
 
-1. `Bundle.main.resourceURL/CodexMonitor_CodexMonitor.bundle/CatFrames`
-2. `Bundle.main.bundleURL/CodexMonitor_CodexMonitor.bundle/CatFrames`
+1. the `CodexMonitor_CodexMonitor.bundle` under `Bundle.main.resourceURL`
+2. the `CodexMonitor_CodexMonitor.bundle` under `Bundle.main.bundleURL`
 3. `Bundle.main.resourceURL/CatFrames`
 
-The first path covers a packaged `.app`, the second covers SwiftPM command-line
-build products, and the third provides a direct-resource fallback. Resolution
-returns `nil` when a frame is missing; `RunningCatAnimationView.loadFrames()`
-will continue using `compactMap`, so a missing optional frame cannot crash the
-application.
+The first two locations are opened with `Bundle(url:)`, then queried for the
+frame under `CatFrames`. This supports both the flat resource bundle produced by
+the Swift 6.2 release toolchain and the standard
+`Contents/Resources/CatFrames` bundle produced by the current Swift 6.4
+toolchain. The third location provides a direct-resource fallback. Resolution
+returns `nil` when a frame is missing or is not a regular file;
+`RunningCatAnimationView.loadFrames()` will continue using `compactMap`, so a
+missing optional frame cannot crash the application.
 
 `RunningCatIcon` will load `NSImage` instances from the resolved file URLs. It
 will not reference `Bundle.module`, removing the generated accessor's fatal
@@ -58,10 +61,10 @@ failure path from runtime behavior.
 
 ## Testing
 
-A new Swift test target will create temporary directory structures for the
-installed-app and SwiftPM layouts, place a test frame at the expected location,
-and assert that the locator returns the correct file URL. It will also verify
-that a missing frame returns `nil` instead of trapping.
+A new Swift test target will create temporary directory structures for the flat
+Swift 6.2 bundle, native Swift 6.4 bundle, installed-app, SwiftPM, and direct
+resource layouts. It will verify the resolution priority, missing-frame behavior,
+and rejection of a directory masquerading as a PNG.
 
 TDD order:
 
@@ -77,8 +80,9 @@ TDD order:
 
 ## Packaging and Rollback
 
-The packaging script will validate all five files under
-`Contents/Resources/CodexMonitor_CodexMonitor.bundle/CatFrames` before signing.
+The packaging script will detect whether the copied SwiftPM bundle uses the flat
+`CatFrames` layout or native `Contents/Resources/CatFrames` layout and validate
+all five files before signing.
 The generated DMG will remain Apple Silicon-only and ad-hoc signed, matching the
 current release process.
 
