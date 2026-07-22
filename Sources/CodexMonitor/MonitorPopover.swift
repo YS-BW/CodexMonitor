@@ -5,11 +5,11 @@ import AppKit
 
 struct StatusLabel: View {
     let snapshot: UsageSnapshot
-    let catState: CatActivityState
+    let dogState: DogActivityState
 
     var body: some View {
         HStack(spacing: 5) {
-            CatStatusIcon(state: catState)
+            DogStatusIcon(state: dogState)
                 .frame(width: 28, height: 18)
             Text(snapshot.statusWindow.map { "\($0.remainingPercent)%" } ?? "—")
         }
@@ -19,7 +19,7 @@ struct StatusLabel: View {
     private var accessibilityText: String {
         let quota = snapshot.statusWindow.map { "额度剩余 \($0.remainingPercent)%" }
             ?? "额度暂不可用"
-        return "Codex \(catState.accessibilityName)，\(quota)"
+        return "Codex \(dogState.accessibilityName)，\(quota)"
     }
 }
 

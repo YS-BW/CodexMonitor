@@ -27,9 +27,13 @@ enum CodexHookInstaller {
     private static let helperName = "codex-monitor-hook"
     private static let marker = "/.codex/bin/\(helperName)"
     private static let events = [
+        "SessionStart",
         "UserPromptSubmit",
         "PreToolUse",
+        "PostToolUse",
         "PermissionRequest",
+        "PreCompact",
+        "PostCompact",
         "Stop",
         "SubagentStart",
         "SubagentStop",
@@ -59,19 +63,24 @@ enum CodexHookInstaller {
     static func installAndTrust() async throws {
         try await Task.detached(priority: .userInitiated) {
             try install()
-            let hooks = try monitorHooks()
-            guard !hooks.isEmpty else { throw InstallError.hooksNotDiscovered }
+            let hooks = try waitForCompleteHookSet()
 
             let trustEntries = Dictionary(uniqueKeysWithValues: hooks.map { hook in
                 (hook.key, ["trusted_hash": hook.currentHash, "enabled": true] as [String: Any])
             })
             try writeTrustEntries(trustEntries)
 
-            let verifiedHooks = try monitorHooks()
-            guard !verifiedHooks.isEmpty,
-                  verifiedHooks.allSatisfy({ $0.trustStatus == "trusted" && $0.enabled })
-            else { throw InstallError.trustWasNotSaved }
+            try waitForTrustedHookSet()
         }.value
+    }
+
+    static func repairInstalledHooksIfNeeded() async throws -> Bool {
+        guard isInstalled else { return false }
+        if !definitionsNeedUpdate, await resolvedStatus() == .active {
+            return false
+        }
+        try await installAndTrust()
+        return true
     }
 
     private static func install() throws {
@@ -80,7 +89,7 @@ enum CodexHookInstaller {
         let binDirectory = codexHome.appending(path: "bin", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: binDirectory, withIntermediateDirectories: true)
 
-        guard let source = Bundle.main.url(forResource: "CodexMonitorHook", withExtension: nil) else {
+        guard let source = bundledHelperURL else {
             throw InstallError.missingBundledHelper
         }
         let destination = binDirectory.appending(path: helperName)
@@ -102,9 +111,48 @@ enum CodexHookInstaller {
         let hooks = codexHome.appending(path: "hooks.json")
         guard fileManager.isExecutableFile(atPath: helper.path),
               let data = try? Data(contentsOf: hooks),
-              let text = String(data: data, encoding: .utf8)
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let configuredHooks = root["hooks"] as? [String: Any]
         else { return false }
-        return text.contains(marker)
+        return configuredHooks.values.contains { value in
+            guard let groups = value as? [[String: Any]] else { return false }
+            return groups.contains(where: containsCodexMonitorHandler)
+        }
+    }
+
+    private static var definitionsNeedUpdate: Bool {
+        let fileManager = FileManager.default
+        let codexHome = codexHomeURL(fileManager: fileManager)
+        let hooksURL = codexHome.appending(path: "hooks.json")
+        guard let data = try? Data(contentsOf: hooksURL),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = root["hooks"] as? [String: Any]
+        else { return true }
+
+        let installedEvents = Set(hooks.compactMap { event, value -> String? in
+            guard let groups = value as? [[String: Any]],
+                  groups.contains(where: containsCodexMonitorHandler)
+            else { return nil }
+            return event
+        })
+        guard Set(events).isSubset(of: installedEvents),
+              Set(obsoleteEvents).isDisjoint(with: installedEvents)
+        else { return true }
+
+        guard let source = bundledHelperURL else { return false }
+        let destination = codexHome.appending(path: "bin/\(helperName)")
+        return !fileManager.contentsEqual(atPath: source.path, andPath: destination.path)
+    }
+
+    private static var bundledHelperURL: URL? {
+        if let bundled = Bundle.main.url(forResource: "CodexMonitorHook", withExtension: nil) {
+            return bundled
+        }
+        guard let executableDirectory = Bundle.main.executableURL?.deletingLastPathComponent() else {
+            return nil
+        }
+        let sibling = executableDirectory.appending(path: "CodexMonitorHook")
+        return FileManager.default.isExecutableFile(atPath: sibling.path) ? sibling : nil
     }
 
     private static func mergeHooksJSON(at url: URL) throws {
@@ -138,7 +186,7 @@ enum CodexHookInstaller {
                     "timeout": 2,
                 ]],
             ]
-            if ["PreToolUse", "PermissionRequest", "SubagentStart", "SubagentStop"].contains(event) {
+            if ["PreToolUse", "PostToolUse", "PermissionRequest", "SubagentStart", "SubagentStop"].contains(event) {
                 group["matcher"] = ".*"
             }
             groups.append(group)
@@ -166,6 +214,7 @@ enum CodexHookInstaller {
             .flatMap { $0["hooks"] as? [[String: Any]] ?? [] }
             .compactMap { hook -> DiscoveredHook? in
                 guard let key = hook["key"] as? String,
+                      let eventName = hook["eventName"] as? String,
                       let command = hook["command"] as? String,
                       command.contains(marker),
                       let currentHash = hook["currentHash"] as? String,
@@ -174,11 +223,41 @@ enum CodexHookInstaller {
                 else { return nil }
                 return DiscoveredHook(
                     key: key,
+                    eventName: eventName,
                     currentHash: currentHash,
                     trustStatus: trustStatus,
                     enabled: enabled
                 )
             }
+    }
+
+    private static func waitForCompleteHookSet() throws -> [DiscoveredHook] {
+        for attempt in 0..<12 {
+            let hooks = try monitorHooks()
+            if Set(hooks.map(\.eventName)) == expectedEventNames {
+                return hooks
+            }
+            if attempt < 11 { usleep(150_000) }
+        }
+        throw InstallError.hooksNotDiscovered
+    }
+
+    private static func waitForTrustedHookSet() throws {
+        for attempt in 0..<12 {
+            let hooks = try monitorHooks()
+            if Set(hooks.map(\.eventName)) == expectedEventNames,
+               hooks.allSatisfy({ $0.trustStatus == "trusted" && $0.enabled }) {
+                return
+            }
+            if attempt < 11 { usleep(150_000) }
+        }
+        throw InstallError.trustWasNotSaved
+    }
+
+    private static var expectedEventNames: Set<String> {
+        Set(events.map { event in
+            event.prefix(1).lowercased() + event.dropFirst()
+        })
     }
 
     private static func writeTrustEntries(_ entries: [String: [String: Any]]) throws {
@@ -214,11 +293,15 @@ enum CodexHookInstaller {
 
         defer {
             try? input.fileHandleForWriting.close()
-            if process.isRunning {
-                process.terminate()
-                process.waitUntilExit()
-            }
+            try? output.fileHandleForReading.close()
+            stop(process)
         }
+
+        let descriptor = output.fileHandleForReading.fileDescriptor
+        let currentFlags = fcntl(descriptor, F_GETFL)
+        guard currentFlags >= 0,
+              fcntl(descriptor, F_SETFL, currentFlags | O_NONBLOCK) >= 0
+        else { throw InstallError.appServerUnavailable }
 
         let messages: [[String: Any]] = [
             [
@@ -239,22 +322,29 @@ enum CodexHookInstaller {
         }
 
         var pending = Data()
-        let descriptor = output.fileHandleForReading.fileDescriptor
         let deadline = Date().addingTimeInterval(8)
         while Date() < deadline {
+            if Task.isCancelled { throw CancellationError() }
             var pollDescriptor = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
-            let remaining = max(1, Int32(deadline.timeIntervalSinceNow * 1_000))
+            let remaining = max(1, min(250, Int32(deadline.timeIntervalSinceNow * 1_000)))
             let pollResult = poll(&pollDescriptor, 1, remaining)
             if pollResult < 0 {
                 if errno == EINTR { continue }
                 throw InstallError.appServerUnavailable
             }
-            if pollResult == 0 { break }
+            if pollResult == 0 { continue }
 
-            guard let chunk = try output.fileHandleForReading.read(upToCount: 65_536),
-                  !chunk.isEmpty
-            else { break }
-            pending.append(chunk)
+            var bytes = [UInt8](repeating: 0, count: 8_192)
+            let count = Darwin.read(descriptor, &bytes, bytes.count)
+            if count > 0 {
+                pending.append(contentsOf: bytes.prefix(count))
+            } else if count == 0 {
+                break
+            } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                continue
+            } else {
+                throw InstallError.appServerUnavailable
+            }
 
             while let newline = pending.firstIndex(of: 0x0A) {
                 let line = pending[..<newline]
@@ -273,6 +363,18 @@ enum CodexHookInstaller {
             }
         }
         throw InstallError.appServerTimedOut
+    }
+
+    private static func stop(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        let deadline = Date().addingTimeInterval(0.4)
+        while process.isRunning, Date() < deadline {
+            usleep(10_000)
+        }
+        if process.isRunning {
+            Darwin.kill(process.processIdentifier, SIGKILL)
+        }
     }
 
     private static func codexExecutableURL() throws -> URL {
@@ -325,6 +427,7 @@ enum CodexHookInstaller {
 
     private struct DiscoveredHook {
         let key: String
+        let eventName: String
         let currentHash: String
         let trustStatus: String
         let enabled: Bool

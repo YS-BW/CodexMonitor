@@ -37,12 +37,9 @@ struct CodexAppServerUsageFetcher: Sendable {
         }
 
         defer {
-            if process.isRunning {
-                process.terminate()
-            }
-            process.waitUntilExit()
             try? inputPipe.fileHandleForWriting.close()
             try? outputPipe.fileHandleForReading.close()
+            stop(process)
         }
 
         let descriptor = outputPipe.fileHandleForReading.fileDescriptor
@@ -95,6 +92,18 @@ struct CodexAppServerUsageFetcher: Sendable {
         let resultData = try JSONSerialization.data(withJSONObject: result)
         let response = try JSONDecoder().decode(ResultPayload.self, from: resultData)
         return makeSnapshot(from: response.rateLimits)
+    }
+
+    private static func stop(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        let deadline = Date().addingTimeInterval(0.4)
+        while process.isRunning, Date() < deadline {
+            usleep(10_000)
+        }
+        if process.isRunning {
+            Darwin.kill(process.processIdentifier, SIGKILL)
+        }
     }
 
     private static func waitForResult(

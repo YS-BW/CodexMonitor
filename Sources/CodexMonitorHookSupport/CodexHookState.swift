@@ -12,12 +12,20 @@ public struct CodexHookTask: Codable, Sendable, Equatable {
     public let turnID: String
     public var status: CodexHookTaskStatus
     public var updatedAt: Date
+    public var activeWorkIDs: Set<String>?
 
-    public init(sessionID: String, turnID: String, status: CodexHookTaskStatus, updatedAt: Date) {
+    public init(
+        sessionID: String,
+        turnID: String,
+        status: CodexHookTaskStatus,
+        updatedAt: Date,
+        activeWorkIDs: Set<String> = []
+    ) {
         self.sessionID = sessionID
         self.turnID = turnID
         self.status = status
         self.updatedAt = updatedAt
+        self.activeWorkIDs = activeWorkIDs
     }
 }
 
@@ -71,6 +79,9 @@ public struct CodexHookSnapshot: Codable, Sendable, Equatable {
         let key = Self.taskKey(sessionID: sessionID, turnID: turnID)
 
         switch event.name {
+        case "SessionStart":
+            tasks = tasks.filter { $0.value.sessionID != sessionID }
+            if tasks.isEmpty { lastPromptAt = nil }
         case "UserPromptSubmit":
             lastPromptAt = now
             tasks = tasks.filter { $0.value.sessionID != sessionID }
@@ -81,26 +92,46 @@ public struct CodexHookSnapshot: Codable, Sendable, Equatable {
                 updatedAt: now
             )
         case "PreToolUse", "SubagentStart":
-            tasks[key] = CodexHookTask(
-                sessionID: sessionID,
-                turnID: turnID,
-                status: .working,
-                updatedAt: now
-            )
-        case "PostToolUse", "SubagentStop":
-            tasks[key] = CodexHookTask(
+            var task = tasks[key] ?? CodexHookTask(
                 sessionID: sessionID,
                 turnID: turnID,
                 status: .thinking,
                 updatedAt: now
             )
-        case "PermissionRequest":
-            tasks[key] = CodexHookTask(
+            var activeWorkIDs = task.activeWorkIDs ?? []
+            activeWorkIDs.insert(event.workID)
+            task.activeWorkIDs = activeWorkIDs
+            task.status = .working
+            task.updatedAt = now
+            tasks[key] = task
+        case "PostToolUse", "SubagentStop":
+            guard var task = tasks[key] else { break }
+            var activeWorkIDs = task.activeWorkIDs ?? []
+            activeWorkIDs.remove(event.workID)
+            task.activeWorkIDs = activeWorkIDs
+            task.status = activeWorkIDs.isEmpty ? .thinking : .working
+            task.updatedAt = now
+            tasks[key] = task
+        case "PreCompact", "PostCompact":
+            var task = tasks[key] ?? CodexHookTask(
                 sessionID: sessionID,
                 turnID: turnID,
-                status: .waiting,
+                status: .thinking,
                 updatedAt: now
             )
+            task.status = .thinking
+            task.updatedAt = now
+            tasks[key] = task
+        case "PermissionRequest":
+            var task = tasks[key] ?? CodexHookTask(
+                sessionID: sessionID,
+                turnID: turnID,
+                status: .thinking,
+                updatedAt: now
+            )
+            task.status = .waiting
+            task.updatedAt = now
+            tasks[key] = task
         case "Stop":
             if tasks.removeValue(forKey: key) == nil {
                 tasks = tasks.filter { $0.value.sessionID != sessionID }
@@ -126,17 +157,36 @@ public struct CodexHookEvent: Codable, Sendable, Equatable {
     public let name: String
     public let sessionID: String?
     public let turnID: String?
+    public let toolUseID: String?
+    public let agentID: String?
 
     enum CodingKeys: String, CodingKey {
         case name = "hook_event_name"
         case sessionID = "session_id"
         case turnID = "turn_id"
+        case toolUseID = "tool_use_id"
+        case agentID = "agent_id"
     }
 
-    public init(name: String, sessionID: String?, turnID: String?) {
+    public init(
+        name: String,
+        sessionID: String?,
+        turnID: String?,
+        toolUseID: String? = nil,
+        agentID: String? = nil
+    ) {
         self.name = name
         self.sessionID = sessionID
         self.turnID = turnID
+        self.toolUseID = toolUseID
+        self.agentID = agentID
+    }
+
+    var workID: String {
+        if name == "SubagentStart" || name == "SubagentStop" {
+            return "agent:\(agentID ?? "unknown")"
+        }
+        return "tool:\(toolUseID ?? "unknown")"
     }
 
     public static func decode(_ data: Data, fallbackName: String? = nil) -> CodexHookEvent {
@@ -145,7 +195,9 @@ public struct CodexHookEvent: Codable, Sendable, Equatable {
                 event = CodexHookEvent(
                     name: fallbackName,
                     sessionID: event.sessionID,
-                    turnID: event.turnID
+                    turnID: event.turnID,
+                    toolUseID: event.toolUseID,
+                    agentID: event.agentID
                 )
             }
             return event

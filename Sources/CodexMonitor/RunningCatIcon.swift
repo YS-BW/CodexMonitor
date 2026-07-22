@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-enum CatActivityState: String, Equatable {
+enum DogActivityState: String, Equatable {
     case idle
     case thinking
     case working
@@ -35,30 +35,46 @@ enum CatActivityState: String, Equatable {
     }
 }
 
-struct CatStatusIcon: NSViewRepresentable {
-    let state: CatActivityState
+enum DogStatusImage {
+    static func image(for state: DogActivityState) -> NSImage? {
+        let preferredPrefix = "elthen-\(state.rawValue)-frame"
+        let fallbackPrefix = state.framePrefix
+        guard let url = CatFrameResourceLocator.frameURL(prefix: preferredPrefix, index: 0)
+            ?? CatFrameResourceLocator.frameURL(prefix: fallbackPrefix, index: 0),
+              let image = NSImage(contentsOf: url)
+        else {
+            return nil
+        }
+        image.size = NSSize(width: 28, height: 18)
+        image.isTemplate = true
+        return image
+    }
+}
 
-    func makeNSView(context: Context) -> CatStatusAnimationView {
-        let view = CatStatusAnimationView()
+struct DogStatusIcon: NSViewRepresentable {
+    let state: DogActivityState
+
+    func makeNSView(context: Context) -> DogStatusAnimationView {
+        let view = DogStatusAnimationView()
         view.setState(state)
         return view
     }
 
-    func updateNSView(_ nsView: CatStatusAnimationView, context: Context) {
+    func updateNSView(_ nsView: DogStatusAnimationView, context: Context) {
         nsView.setState(state)
     }
 
-    static func dismantleNSView(_ nsView: CatStatusAnimationView, coordinator: ()) {
+    static func dismantleNSView(_ nsView: DogStatusAnimationView, coordinator: ()) {
         nsView.stopAnimating()
     }
 }
 
-final class CatStatusAnimationView: NSView {
+final class DogStatusAnimationView: NSView {
     private static let fallbackTransitionDuration: TimeInterval = 0.22
     private static let transitionFrameDuration: TimeInterval = 0.055
     private let tintLayer = CALayer()
     private let frameLayer = CALayer()
-    private var state: CatActivityState?
+    private var state: DogActivityState?
     private var frames: [CGImage] = []
     private var transitionTask: Task<Void, Never>?
 
@@ -80,6 +96,10 @@ final class CatStatusAnimationView: NSView {
         NSSize(width: 28, height: 18)
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
     override func layout() {
         super.layout()
         CATransaction.begin()
@@ -94,7 +114,7 @@ final class CatStatusAnimationView: NSView {
         updateTintColor()
     }
 
-    func setState(_ newState: CatActivityState) {
+    func setState(_ newState: DogActivityState) {
         guard state != newState else {
             startAnimating(duration: newState.animationDuration)
             return
@@ -107,7 +127,7 @@ final class CatStatusAnimationView: NSView {
         frames = personalFrames.isEmpty
             ? Self.loadFrames(prefix: newState.framePrefix)
             : personalFrames
-        frameLayer.removeAnimation(forKey: "cat-status")
+        frameLayer.removeAnimation(forKey: "dog-status")
         transitionTask?.cancel()
 
         guard !isInitialState,
@@ -129,7 +149,7 @@ final class CatStatusAnimationView: NSView {
     }
 
     private func startAnimating(duration: TimeInterval) {
-        guard !frames.isEmpty, frameLayer.animation(forKey: "cat-status") == nil else { return }
+        guard !frames.isEmpty, frameLayer.animation(forKey: "dog-status") == nil else { return }
 
         frameLayer.contents = frames[0]
         let animation = CAKeyframeAnimation(keyPath: "contents")
@@ -138,14 +158,14 @@ final class CatStatusAnimationView: NSView {
         animation.duration = duration
         animation.repeatCount = .infinity
         animation.isRemovedOnCompletion = false
-        frameLayer.add(animation, forKey: "cat-status")
+        frameLayer.add(animation, forKey: "dog-status")
     }
 
     func stopAnimating() {
         transitionTask?.cancel()
         transitionTask = nil
-        frameLayer.removeAnimation(forKey: "cat-status")
-        frameLayer.removeAnimation(forKey: "cat-transition")
+        frameLayer.removeAnimation(forKey: "dog-status")
+        frameLayer.removeAnimation(forKey: "dog-transition")
     }
 
     @discardableResult
@@ -167,7 +187,7 @@ final class CatStatusAnimationView: NSView {
         contents.calculationMode = .discrete
         contents.duration = TimeInterval(transitionValues.count) * Self.transitionFrameDuration
         contents.timingFunction = CAMediaTimingFunction(name: .linear)
-        frameLayer.add(contents, forKey: "cat-transition")
+        frameLayer.add(contents, forKey: "dog-transition")
         return contents.duration
     }
 
@@ -193,7 +213,7 @@ final class CatStatusAnimationView: NSView {
         transition.animations = [contents, scale, opacity]
         transition.duration = Self.fallbackTransitionDuration
         transition.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        frameLayer.add(transition, forKey: "cat-transition")
+        frameLayer.add(transition, forKey: "dog-transition")
     }
 
     private func updateTintColor() {

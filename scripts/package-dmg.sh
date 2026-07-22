@@ -8,8 +8,17 @@ APP="$STAGING/Codex Monitor.app"
 ASSETS="$DIST/assets"
 ICONSET="$ASSETS/AppIcon.iconset"
 RW_DMG="$DIST/CodexMonitor-rw.dmg"
-FINAL_DMG="$DIST/CodexMonitor-0.4.1.dmg"
+FINAL_DMG="$DIST/CodexMonitor-0.4.6.dmg"
 VOLUME_NAME="Codex Monitor Installer"
+BUILD_VOLUME_NAME="Codex Monitor Build $$"
+MOUNT_DEVICE=""
+
+cleanup_mount() {
+  if [[ -n "$MOUNT_DEVICE" ]]; then
+    hdiutil detach "$MOUNT_DEVICE" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_mount EXIT
 
 rm -rf "$STAGING" "$ASSETS" "$RW_DMG" "$FINAL_DMG"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$ICONSET"
@@ -92,33 +101,47 @@ fi
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 
 codesign --force --deep --sign - "$APP"
-hdiutil create -volname "$VOLUME_NAME" -srcfolder "$STAGING" -ov -format UDRW "$RW_DMG"
-MOUNT_POINT="$(hdiutil attach -readwrite -noverify -nobrowse "$RW_DMG" | awk -F '\t' '/\/Volumes\// {print $NF}')"
+hdiutil create -volname "$BUILD_VOLUME_NAME" -srcfolder "$STAGING" -ov -format UDRW "$RW_DMG"
+ATTACH_OUTPUT="$(hdiutil attach -readwrite -noverify -nobrowse "$RW_DMG")"
+MOUNT_POINT="$(print -r -- "$ATTACH_OUTPUT" | awk -F '\t' '/\/Volumes\// {print $NF}' | tail -1)"
+MOUNT_DEVICE="$(print -r -- "$ATTACH_OUTPUT" | awk 'NR == 1 {print $1}')"
 mkdir -p "$MOUNT_POINT/.background"
 cp "$ASSETS/install-background.png" "$MOUNT_POINT/.background/install-background.png"
 chflags hidden "$MOUNT_POINT/.background"
 
-osascript <<'APPLESCRIPT'
-tell application "Finder"
-    tell disk "Codex Monitor Installer"
-        open
-        set current view of container window to icon view
-        set toolbar visible of container window to false
-        set statusbar visible of container window to false
-        set bounds of container window to {100, 100, 860, 560}
-        set viewOptions to the icon view options of container window
-        set arrangement of viewOptions to not arranged
-        set icon size of viewOptions to 112
-        set text size of viewOptions to 14
-        set background picture of viewOptions to file ".background:install-background.png"
-        set position of item "Codex Monitor.app" to {190, 285}
-        set position of item "Applications" to {570, 285}
-        close
+osascript - "$BUILD_VOLUME_NAME" <<'APPLESCRIPT'
+on run argv
+    set buildVolumeName to item 1 of argv
+    tell application "Finder"
+        tell disk buildVolumeName
+            open
+            set current view of container window to icon view
+            set toolbar visible of container window to false
+            set statusbar visible of container window to false
+            set bounds of container window to {100, 100, 860, 520}
+            set viewOptions to the icon view options of container window
+            set arrangement of viewOptions to not arranged
+            set icon size of viewOptions to 120
+            set text size of viewOptions to 13
+            set background picture of viewOptions to file ".background:install-background.png"
+            set position of item "Codex Monitor.app" to {190, 250}
+            set position of item "Applications" to {570, 250}
+            update without registering applications
+            delay 2
+            close
+        end tell
     end tell
-end tell
+end run
 APPLESCRIPT
 
 sync
-hdiutil detach "$MOUNT_POINT"
+if [[ ! -f "$MOUNT_POINT/.DS_Store" ]]; then
+  print -u2 -- "error: Finder installer layout was not saved to $MOUNT_POINT/.DS_Store"
+  exit 1
+fi
+diskutil rename "$MOUNT_POINT" "$VOLUME_NAME" >/dev/null
+hdiutil detach "$MOUNT_DEVICE"
+MOUNT_DEVICE=""
 hdiutil convert "$RW_DMG" -format UDZO -o "$FINAL_DMG"
 rm -f "$RW_DMG"
+trap - EXIT

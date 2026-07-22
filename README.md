@@ -1,4 +1,4 @@
-# ✨ Codex Monitor
+# 🐕 Codex Monitor
 
 <p align="center">
   <img src="docs/images/app-icon.png" alt="Codex Monitor 图标" width="132">
@@ -21,19 +21,19 @@
 
 ## 👀 一眼看清 Codex
 
-状态栏始终保留最重要的 **额度百分比**：同一只像素小猫会由 Codex Hooks 实时切换空闲、思考、工作和等待四种动作。点击后展开紧凑面板，所有模块都可以显示、隐藏和自由排序。
+状态栏始终保留最重要的 **额度百分比**：同一只像素小狗会由 Codex Hooks 实时切换空闲、思考、工作和等待四种动作。点击后展开紧凑面板，所有模块都可以显示、隐藏和自由排序。
 
 <p align="center">
   <img src="docs/images/menu-bar-preview.png" alt="Codex Monitor 当前界面" width="500">
 </p>
 
-### 🐈 四种任务状态
+### 🐕 四种任务状态
 
 <p align="center">
-  <img src="docs/images/cat-status-demo.gif" alt="Codex Monitor 空闲、思考、工作与等待动画" width="760">
+  <img src="docs/images/cat-status-demo.gif" alt="Codex Monitor 像素小狗的空闲、思考、工作与等待动画" width="760">
 </p>
 
-小猫由 Codex Hooks 实时切换 **空闲、思考、工作、等待** 四种动作：提交任务后进入思考，调用工具时开始工作，需要确认时进入等待，任务结束后恢复空闲。动作切换带有轻量过渡，思考状态会保留足够时间，避免被第一个工具事件瞬间覆盖。
+小狗由 Codex Hooks 实时切换 **空闲、思考、工作、等待** 四种动作：提交任务后进入思考，调用工具时开始工作，需要确认时进入等待，任务结束后恢复空闲。动作切换带有轻量过渡，思考状态会保留足够时间，避免被第一个工具事件瞬间覆盖。
 
 ## ✨ 主要功能
 
@@ -111,7 +111,7 @@
 - 启动时先显示上次缓存的额度，避免状态栏长时间出现空值。
 - 额度与最近会话优先刷新，较重的 Token 汇总在后台完成。
 - Token 扫描采用文件级增量缓存，只重新解析发生变化的日志。
-- 小猫状态完全由 Codex Hooks 推送，不扫描任务日志，也不设置状态轮询。
+- 小狗状态完全由 Codex Hooks 推送，不扫描任务日志，也不设置状态轮询。
 
 ## ✅ 系统要求
 
@@ -123,7 +123,7 @@
 ## ❓ 常见问题
 
 <details>
-<summary><strong>为什么任务开始后小猫没有切换动作？</strong></summary>
+<summary><strong>为什么任务开始后小狗没有切换动作？</strong></summary>
 
 在设置中点击 Hooks 选项，按弹窗提示选择“安装并授权”。完成后不需要打开 CLI；如果 Codex Desktop 当时正在运行，请重新打开一次。
 </details>
@@ -184,7 +184,7 @@ docs/images/            README 与项目展示图片
 
 第三方组件许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-菜单栏猫咪动画素材由 [Elthen's Pixel Art Shop](https://elthen.itch.io/2d-pixel-art-cat-sprites) 创作，并依据作者许可用于本项目。感谢 Elthen 提供这套精致的像素动画。🐾
+菜单栏像素小狗动画素材由 [Elthen's Pixel Art Shop](https://elthen.itch.io/2d-pixel-art-cat-sprites) 创作，并依据作者许可用于本项目。感谢 Elthen 提供这套精致的像素动画。🐾
 
 ## 🗺️ 当前限制
 

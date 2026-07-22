@@ -25,8 +25,8 @@ final class MonitorStore {
     ]
     private var autoRefreshTask: Task<Void, Never>?
     private var tokenRefreshTask: Task<Void, Never>?
-    private var catStateRefreshTask: Task<Void, Never>?
-    private var catStateRevision = 0
+    private var dogStateRefreshTask: Task<Void, Never>?
+    private var dogStateRevision = 0
     private var refreshIntervalMinutes: Int?
     private let hookStateMonitor = CodexHookStateMonitor()
     private static let snapshotCacheKey = "cachedUsageSnapshot"
@@ -39,6 +39,7 @@ final class MonitorStore {
         Task { await refresh() }
         let storedInterval = UserDefaults.standard.object(forKey: "refreshIntervalMinutes") as? Int ?? 1
         setRefreshInterval(storedInterval)
+        Task { await repairInstalledHooksIfNeeded() }
     }
 
     private func startHookMonitoring() {
@@ -47,15 +48,15 @@ final class MonitorStore {
         hookStateMonitor.onChange = { [weak self] snapshot in
             Task { @MainActor [weak self] in
                 self?.hookSnapshot = snapshot
-                self?.scheduleCatStateRefresh(for: snapshot)
+                self?.scheduleDogStateRefresh(for: snapshot)
             }
         }
         hookStateMonitor.start()
-        scheduleCatStateRefresh(for: hookSnapshot)
+        scheduleDogStateRefresh(for: hookSnapshot)
     }
 
-    var catActivityState: CatActivityState {
-        _ = catStateRevision
+    var dogActivityState: DogActivityState {
+        _ = dogStateRevision
         return switch hookSnapshot.effectiveStatus {
         case .thinking: .thinking
         case .working: .working
@@ -64,9 +65,9 @@ final class MonitorStore {
         }
     }
 
-    private func scheduleCatStateRefresh(for snapshot: CodexHookSnapshot) {
-        catStateRefreshTask?.cancel()
-        catStateRefreshTask = nil
+    private func scheduleDogStateRefresh(for snapshot: CodexHookSnapshot) {
+        dogStateRefreshTask?.cancel()
+        dogStateRefreshTask = nil
         guard !snapshot.tasks.isEmpty, let lastPromptAt = snapshot.lastPromptAt else { return }
 
         let deadline = lastPromptAt.addingTimeInterval(
@@ -75,11 +76,11 @@ final class MonitorStore {
         let remaining = deadline.timeIntervalSinceNow
         guard remaining > 0 else { return }
 
-        catStateRefreshTask = Task { [weak self] in
+        dogStateRefreshTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(remaining))
             guard !Task.isCancelled, let self else { return }
-            catStateRevision += 1
-            catStateRefreshTask = nil
+            dogStateRevision += 1
+            dogStateRefreshTask = nil
         }
     }
 
@@ -96,6 +97,15 @@ final class MonitorStore {
 
     func reloadHookSetupStatus() async {
         hookSetupStatus = await CodexHookInstaller.resolvedStatus()
+    }
+
+    private func repairInstalledHooksIfNeeded() async {
+        do {
+            _ = try await CodexHookInstaller.repairInstalledHooksIfNeeded()
+            hookSetupStatus = await CodexHookInstaller.resolvedStatus()
+        } catch {
+            hookSetupStatus = CodexHookInstaller.localStatus
+        }
     }
 
     func setRefreshInterval(_ minutes: Int) {

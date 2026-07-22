@@ -2,6 +2,50 @@ import AppKit
 import Observation
 import SwiftUI
 
+private enum LegacyDefaultsMigration {
+    private static let temporaryMenuBarDomain = "com.ysbw.CodexMonitor.MenuBar"
+    private static let migrationKey = "didMigrateTemporaryMenuBarDefaultsV1"
+
+    static func runIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: migrationKey) else { return }
+
+        if let temporaryValues = defaults.persistentDomain(forName: temporaryMenuBarDomain) {
+            for (key, value) in temporaryValues where !key.hasPrefix("NSStatusItem ") {
+                guard defaults.object(forKey: key) == nil else { continue }
+                defaults.set(value, forKey: key)
+            }
+        }
+        defaults.set(true, forKey: migrationKey)
+    }
+}
+
+@MainActor
+private enum StatusItemPlacement {
+    static let autosaveName = "codex-monitor-main"
+    private static let positionPrefix = "NSStatusItem Preferred Position "
+    private static let visiblePrefix = "NSStatusItem VisibleCC "
+    private static let preparedKey = "didPrepareStatusItemPlacementV2"
+
+    static func prepare(defaults: UserDefaults) {
+        guard !defaults.bool(forKey: preparedKey) else { return }
+        let positionKey = positionPrefix + autosaveName
+        if let value = defaults.object(forKey: positionKey) as? NSNumber {
+            let maximum = NSScreen.screens.map { $0.frame.maxX }.max() ?? 0
+            if value.doubleValue <= 0 || (maximum > 0 && value.doubleValue > maximum + 512) {
+                defaults.removeObject(forKey: positionKey)
+            }
+        } else {
+            defaults.set(700.0, forKey: positionKey)
+        }
+        let visibleKey = visiblePrefix + autosaveName
+        if (defaults.object(forKey: visibleKey) as? NSNumber)?.boolValue == false {
+            defaults.removeObject(forKey: visibleKey)
+        }
+        defaults.set(true, forKey: preparedKey)
+    }
+}
+
 @main
 struct CodexMonitorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -19,11 +63,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
-        let store = MonitorStore()
-        statusBarController = StatusBarController(store: store)
-        Task {
-            try? await Task.sleep(for: .milliseconds(450))
-            await CodexHookSetupUI.presentIfNeeded(store: store)
+        LegacyDefaultsMigration.runIfNeeded()
+        StatusItemPlacement.prepare(defaults: .standard)
+        // Let AppKit finish constructing the menu bar before creating the
+        // status item; creating it during applicationDidFinishLaunching can
+        // leave its window at y=-6 instead of inside the menu bar.
+        DispatchQueue.main.async { [weak self] in
+            self?.statusBarController = StatusBarController(store: MonitorStore())
         }
     }
 }
@@ -41,8 +87,8 @@ enum CodexHookSetupUI {
         if store.hookSetupStatus == .active {
             guard alwaysShowStatus else { return }
             showResult(
-                title: "小猫任务动画已启用",
-                message: "Hooks 已安装并获得授权。任务开始和结束时，小猫会自动切换状态。",
+                title: "小狗任务动画已启用",
+                message: "Hooks 已安装并获得授权。任务开始和结束时，小狗会自动切换状态。",
                 style: .informational
             )
             return
@@ -50,8 +96,8 @@ enum CodexHookSetupUI {
 
         NSApplication.shared.activate()
         let confirmation = NSAlert()
-        confirmation.messageText = "启用小猫任务动画？"
-        confirmation.informativeText = "Codex Monitor 将安装 6 个本地 Hooks，并同时完成 Codex 授权。Hooks 只记录会话标识、轮次标识、运行状态和更新时间；不会保存提示词、文件内容、命令输出或回复。"
+        confirmation.messageText = "启用小狗任务动画？"
+        confirmation.informativeText = "Codex Monitor 将安装完整生命周期 Hooks，并同时完成 Codex 授权。Hooks 只记录会话标识、轮次标识、运行状态和更新时间；不会保存提示词、文件内容、命令输出或回复。"
         confirmation.alertStyle = .informational
         confirmation.addButton(withTitle: "安装并授权")
         confirmation.addButton(withTitle: "暂不")
@@ -106,13 +152,17 @@ enum CodexHookSetupUI {
 @MainActor
 private final class StatusBarController: NSObject, NSPopoverDelegate {
     private let store: MonitorStore
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private var statusItem: NSStatusItem
     private let popover = NSPopover()
     private var statusHostingView: PassthroughHostingView<StatusLabel>?
     private var lastPopoverCloseAt = Date.distantPast
 
     init(store: MonitorStore) {
         self.store = store
+        StatusItemPlacement.prepare(defaults: .standard)
+        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusItem.autosaveName = StatusItemPlacement.autosaveName
+        self.statusItem.isVisible = true
         super.init()
         configureStatusItem()
         configurePopover()
@@ -128,7 +178,7 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
         let hostingView = PassthroughHostingView(
             rootView: StatusLabel(
                 snapshot: store.snapshot,
-                catState: store.catActivityState
+                dogState: store.dogActivityState
             )
         )
         hostingView.translatesAutoresizingMaskIntoConstraints = false
@@ -172,7 +222,7 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
     private func observeStatusContent() {
         withObservationTracking {
             _ = store.snapshot.statusWindow?.remainingPercent
-            _ = store.catActivityState
+            _ = store.dogActivityState
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.updateStatusContent()
@@ -184,9 +234,8 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
     private func updateStatusContent() {
         statusHostingView?.rootView = StatusLabel(
             snapshot: store.snapshot,
-            catState: store.catActivityState
+            dogState: store.dogActivityState
         )
-
         let quotaText = store.snapshot.statusWindow.map { "\($0.remainingPercent)%" } ?? "—"
         let font = NSFont.menuBarFont(ofSize: 0)
         let textWidth = ceil((quotaText as NSString).size(withAttributes: [.font: font]).width)
