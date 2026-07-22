@@ -113,48 +113,7 @@ struct TokenUsageReport: Sendable {
     static let empty = TokenUsageReport(summary: .empty, trend: .empty, periods: .empty)
 }
 
-struct CodexTaskProgress: Sendable, Equatable {
-    enum State: Sendable, Equatable {
-        case thinking
-        case running
-        case waitingForApproval
-        case waitingForInput
-        case completed
-        case failed
-        case aborted
-        case stalled
-    }
-
-    struct PlanStep: Sendable, Equatable {
-        enum Status: String, Sendable {
-            case pending
-            case inProgress
-            case completed
-        }
-
-        let title: String
-        let status: Status
-    }
-
-    let sessionID: String
-    let source: CodexSession.Source
-    let title: String
-    let phase: String
-    let state: State
-    let startedAt: Date
-    let lastActivityAt: Date
-    let completedAt: Date?
-    let operationCount: Int
-    let plan: [PlanStep]
-    let goalStatus: CodexSession.GoalStatus?
-
-    var completedPlanSteps: Int {
-        plan.count { $0.status == .completed }
-    }
-}
-
 enum DashboardModule: String, CaseIterable, Identifiable, Sendable {
-    case taskProgress
     case currentUsage
     case weeklyUsage
     case totalTokens

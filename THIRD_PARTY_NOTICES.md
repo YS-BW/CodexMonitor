@@ -46,3 +46,16 @@ CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 
 Source: https://github.com/runcat-dev/RunCatNeo
+
+## Elthen 2D Pixel Art Cat Sprites
+
+The cat status animation included in packaged releases is adapted from
+"2D Pixel Art Cat Sprites" by Elthen's Pixel Art Shop.
+
+The author permits use and modification in personal and commercial projects.
+The assets, including modified versions, may not be resold or redistributed as
+standalone assets. Attribution is not required, but is included here with thanks.
+
+Source: https://elthen.itch.io/2d-pixel-art-cat-sprites
+
+License: https://www.patreon.com/elthen/posts/licensing-27430241

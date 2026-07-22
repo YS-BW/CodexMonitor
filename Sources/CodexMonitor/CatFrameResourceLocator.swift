@@ -2,12 +2,13 @@ import Foundation
 
 enum CatFrameResourceLocator {
     static func frameURL(
+        prefix: String = "cat-frame",
         index: Int,
         mainResourceURL: URL? = Bundle.main.resourceURL,
         mainBundleURL: URL = Bundle.main.bundleURL,
         fileManager: FileManager = .default
     ) -> URL? {
-        let frameName = "cat-frame-\(index)"
+        let frameName = "\(prefix)-\(index)"
         let resourceBundleRoots = [
             mainResourceURL?.appending(
                 path: "CodexMonitor_CodexMonitor.bundle",

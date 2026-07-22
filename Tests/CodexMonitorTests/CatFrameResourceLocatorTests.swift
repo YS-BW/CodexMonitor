@@ -84,6 +84,24 @@ final class CatFrameResourceLocatorTests: XCTestCase {
         XCTAssertEqual(result, expectedURL)
     }
 
+    func testResolvesCustomFramePrefix() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let mainResourceURL = root.appending(path: "Resources", directoryHint: .isDirectory)
+        let expectedURL = mainResourceURL.appending(path: "CatFrames/thinking-frame-2.png")
+        try createEmptyFile(at: expectedURL)
+
+        let result = CatFrameResourceLocator.frameURL(
+            prefix: "thinking-frame",
+            index: 2,
+            mainResourceURL: mainResourceURL,
+            mainBundleURL: root.appending(path: "unrelated", directoryHint: .isDirectory),
+            fileManager: .default
+        )
+
+        XCTAssertEqual(result, expectedURL)
+    }
+
     func testMissingFrameReturnsNil() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

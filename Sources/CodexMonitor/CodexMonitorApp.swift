@@ -19,7 +19,87 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
-        statusBarController = StatusBarController(store: MonitorStore())
+        let store = MonitorStore()
+        statusBarController = StatusBarController(store: store)
+        Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            await CodexHookSetupUI.presentIfNeeded(store: store)
+        }
+    }
+}
+
+@MainActor
+enum CodexHookSetupUI {
+    private static var isPresenting = false
+
+    static func presentIfNeeded(store: MonitorStore, alwaysShowStatus: Bool = false) async {
+        guard !isPresenting else { return }
+        isPresenting = true
+        defer { isPresenting = false }
+
+        await store.reloadHookSetupStatus()
+        if store.hookSetupStatus == .active {
+            guard alwaysShowStatus else { return }
+            showResult(
+                title: "小猫任务动画已启用",
+                message: "Hooks 已安装并获得授权。任务开始和结束时，小猫会自动切换状态。",
+                style: .informational
+            )
+            return
+        }
+
+        NSApplication.shared.activate()
+        let confirmation = NSAlert()
+        confirmation.messageText = "启用小猫任务动画？"
+        confirmation.informativeText = "Codex Monitor 将安装 6 个本地 Hooks，并同时完成 Codex 授权。Hooks 只记录会话标识、轮次标识、运行状态和更新时间；不会保存提示词、文件内容、命令输出或回复。"
+        confirmation.alertStyle = .informational
+        confirmation.addButton(withTitle: "安装并授权")
+        confirmation.addButton(withTitle: "暂不")
+        guard confirmation.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try await store.installCodexHooks()
+            showResult(
+                title: "Hooks 已启用",
+                message: "安装和授权已经完成，不需要再打开 CLI。若 Codex Desktop 当前正在运行，重新打开一次后即可加载新的 Hooks。",
+                style: .informational
+            )
+        } catch {
+            showResult(
+                title: "Hooks 启用失败",
+                message: errorMessage(for: error),
+                style: .warning
+            )
+        }
+    }
+
+    private static func showResult(title: String, message: String, style: NSAlert.Style) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = style
+        alert.runModal()
+    }
+
+    private static func errorMessage(for error: Error) -> String {
+        switch error {
+        case CodexHookInstaller.InstallError.codexNotFound:
+            "没有找到 Codex Desktop 或 Codex CLI。请先安装并打开 Codex，然后重试。"
+        case CodexHookInstaller.InstallError.invalidExistingHooks:
+            "现有的 ~/.codex/hooks.json 无法解析，因此没有覆盖它。请检查该文件后重试。"
+        case CodexHookInstaller.InstallError.missingBundledHelper:
+            "应用中缺少 Hooks 辅助程序，请重新安装 Codex Monitor。"
+        case CodexHookInstaller.InstallError.hooksNotDiscovered,
+             CodexHookInstaller.InstallError.trustWasNotSaved:
+            "Hooks 已写入，但 Codex 没有完成授权。请重新打开 Codex Monitor 后再试。"
+        case CodexHookInstaller.InstallError.appServerUnavailable,
+             CodexHookInstaller.InstallError.appServerTimedOut,
+             CodexHookInstaller.InstallError.invalidAppServerResponse,
+             CodexHookInstaller.InstallError.appServerError(_):
+            "暂时无法连接 Codex 的配置服务。请确认 Codex 已正确安装，然后重试。"
+        default:
+            "没有修改已有的其他 Hooks。请确认 Codex Monitor 位于 Applications 文件夹后重试。"
+        }
     }
 }
 
@@ -48,7 +128,7 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
         let hostingView = PassthroughHostingView(
             rootView: StatusLabel(
                 snapshot: store.snapshot,
-                hasActiveTask: hasActiveTask
+                catState: store.catActivityState
             )
         )
         hostingView.translatesAutoresizingMaskIntoConstraints = false
@@ -92,7 +172,7 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
     private func observeStatusContent() {
         withObservationTracking {
             _ = store.snapshot.statusWindow?.remainingPercent
-            _ = store.taskProgresses.map(\.state)
+            _ = store.catActivityState
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.updateStatusContent()
@@ -104,25 +184,14 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
     private func updateStatusContent() {
         statusHostingView?.rootView = StatusLabel(
             snapshot: store.snapshot,
-            hasActiveTask: hasActiveTask
+            catState: store.catActivityState
         )
 
         let quotaText = store.snapshot.statusWindow.map { "\($0.remainingPercent)%" } ?? "—"
         let font = NSFont.menuBarFont(ofSize: 0)
         let textWidth = ceil((quotaText as NSString).size(withAttributes: [.font: font]).width)
-        let iconWidth: CGFloat = hasActiveTask ? 28 : 16
+        let iconWidth: CGFloat = 28
         statusItem.length = iconWidth + 5 + textWidth + 8
-    }
-
-    private var hasActiveTask: Bool {
-        store.taskProgresses.contains { progress in
-            switch progress.state {
-            case .thinking, .running, .waitingForApproval, .waitingForInput:
-                true
-            case .completed, .failed, .aborted, .stalled:
-                false
-            }
-        }
     }
 }
 

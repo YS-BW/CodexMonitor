@@ -8,7 +8,7 @@ APP="$STAGING/Codex Monitor.app"
 ASSETS="$DIST/assets"
 ICONSET="$ASSETS/AppIcon.iconset"
 RW_DMG="$DIST/CodexMonitor-rw.dmg"
-FINAL_DMG="$DIST/CodexMonitor-0.3.2.dmg"
+FINAL_DMG="$DIST/CodexMonitor-0.4.0.dmg"
 VOLUME_NAME="Codex Monitor Installer"
 
 rm -rf "$STAGING" "$ASSETS" "$RW_DMG" "$FINAL_DMG"
@@ -36,8 +36,10 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
 cd "$ROOT"
 swift build -c release
+swift build -c release --product CodexMonitorHook
 BIN_PATH="$(swift build -c release --show-bin-path)"
 cp "$BIN_PATH/CodexMonitor" "$APP/Contents/MacOS/CodexMonitor"
+cp "$BIN_PATH/CodexMonitorHook" "$APP/Contents/Resources/CodexMonitorHook"
 cp "$ROOT/Packaging/Info.plist" "$APP/Contents/Info.plist"
 RESOURCE_BUNDLE="$BIN_PATH/CodexMonitor_CodexMonitor.bundle"
 if [[ -d "$RESOURCE_BUNDLE" ]]; then
@@ -54,12 +56,14 @@ else
   print -u2 -- "error: animation frame directory not found at $NATIVE_FRAME_DIR or $FLAT_FRAME_DIR"
   exit 1
 fi
-for frame_index in {0..4}; do
-  frame_path="$FRAME_DIR/cat-frame-$frame_index.png"
-  if [[ ! -f "$frame_path" ]]; then
-    print -u2 -- "error: missing animation frame: $frame_path"
-    exit 1
-  fi
+for frame_prefix in cat-frame idle-frame thinking-frame waiting-frame; do
+  for frame_index in {0..4}; do
+    frame_path="$FRAME_DIR/$frame_prefix-$frame_index.png"
+    if [[ ! -f "$frame_path" ]]; then
+      print -u2 -- "error: missing animation frame: $frame_path"
+      exit 1
+    fi
+  done
 done
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 

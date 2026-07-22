@@ -5,17 +5,12 @@ import AppKit
 
 struct StatusLabel: View {
     let snapshot: UsageSnapshot
-    let hasActiveTask: Bool
+    let catState: CatActivityState
 
     var body: some View {
         HStack(spacing: 5) {
-            if hasActiveTask {
-                RunningCatIcon()
-                    .frame(width: 28, height: 18)
-            } else {
-                Image(systemName: "sparkles")
-                    .frame(width: 16, height: 18)
-            }
+            CatStatusIcon(state: catState)
+                .frame(width: 28, height: 18)
             Text(snapshot.statusWindow.map { "\($0.remainingPercent)%" } ?? "—")
         }
         .accessibilityLabel(accessibilityText)
@@ -24,14 +19,13 @@ struct StatusLabel: View {
     private var accessibilityText: String {
         let quota = snapshot.statusWindow.map { "额度剩余 \($0.remainingPercent)%" }
             ?? "额度暂不可用"
-        return hasActiveTask ? "Codex 任务运行中，\(quota)" : "Codex \(quota)"
+        return "Codex \(catState.accessibilityName)，\(quota)"
     }
 }
 
 struct MonitorPopover: View {
     let store: MonitorStore
     @State private var isSettingsExpanded = false
-    @AppStorage("showsTaskProgress") private var showsTaskProgress = true
     @AppStorage("showsRecentSessions") private var showsRecentSessions = true
     @AppStorage("showsWeeklyUsage") private var showsWeeklyUsage = true
     @AppStorage("showsFiveHourUsage") private var showsFiveHourUsage = false
@@ -58,7 +52,8 @@ struct MonitorPopover: View {
 
             if isSettingsExpanded {
                 SettingsPanel(
-                    showsTaskProgress: $showsTaskProgress,
+                    hookSetupStatus: store.hookSetupStatus,
+                    configureHooks: configureHooks,
                     showsRecentSessions: $showsRecentSessions,
                     showsWeeklyUsage: $showsWeeklyUsage,
                     showsFiveHourUsage: $showsFiveHourUsage,
@@ -119,8 +114,6 @@ struct MonitorPopover: View {
     @ViewBuilder
     private func moduleContent(for module: DashboardModule) -> some View {
         switch module {
-        case .taskProgress:
-            TaskProgressModule(progresses: store.taskProgresses)
         case .currentUsage:
             if let current = store.snapshot.current {
                 UsageCard(window: current)
@@ -151,7 +144,6 @@ struct MonitorPopover: View {
     private var availableModules: [DashboardModule] {
         store.moduleOrder.filter { module in
             switch module {
-            case .taskProgress: showsTaskProgress
             case .currentUsage: showsFiveHourUsage && store.snapshot.current != nil
             case .weeklyUsage: showsWeeklyUsage && store.snapshot.weekly != nil
             case .totalTokens: showsTotalTokens
@@ -178,6 +170,12 @@ struct MonitorPopover: View {
             store.moduleOrder = store.moduleOrder.map { module in
                 reorderedVisibleModules.contains(module) ? iterator.next()! : module
             }
+        }
+    }
+
+    private func configureHooks() {
+        Task {
+            await CodexHookSetupUI.presentIfNeeded(store: store, alwaysShowStatus: true)
         }
     }
 }
@@ -313,120 +311,6 @@ private struct RecentSessionsModule: View {
                 }
             }
         }
-    }
-}
-
-private struct TaskProgressModule: View {
-    let progresses: [CodexTaskProgress]
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("任务进度")
-                        .font(.headline.weight(.semibold))
-                }
-
-                if progresses.isEmpty {
-                    Text("暂无任务")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(progresses.enumerated()), id: \.element.sessionID) { index, progress in
-                            taskRow(progress, now: context.date)
-                            if index < progresses.count - 1 {
-                                Divider()
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func taskRow(_ progress: CodexTaskProgress, now: Date) -> some View {
-        let step = stepLabel(progress)
-        let activity = progress.phase.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
-                Text(progress.title)
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                Spacer(minLength: 8)
-                HStack(spacing: 7) {
-                    Text(elapsedLabel(progress, now: now))
-                    HStack(spacing: 4) {
-                        Text(statusLabel(progress))
-                        Image(systemName: "circle.fill")
-                            .font(.system(size: 7))
-                            .foregroundStyle(statusColor(progress))
-                    }
-                }
-                .fixedSize(horizontal: true, vertical: false)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            }
-
-            if !activity.isEmpty || step != nil {
-                HStack(spacing: 8) {
-                    if !activity.isEmpty {
-                        Text(activity)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    if let step {
-                        Text(step)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 7)
-        .accessibilityElement(children: .combine)
-    }
-
-    private func statusLabel(_ progress: CodexTaskProgress) -> String {
-        return switch progress.state {
-        case .thinking: "思考中"
-        case .running, .waitingForApproval, .waitingForInput: "进行中"
-        case .completed, .failed, .aborted, .stalled: "已完成"
-        }
-    }
-
-    private func statusColor(_ progress: CodexTaskProgress) -> Color {
-        return switch progress.state {
-        case .running: .blue
-        case .completed: .green
-        case .thinking, .waitingForApproval, .waitingForInput: .secondary
-        case .failed, .aborted, .stalled: .green
-        }
-    }
-
-    private func stepLabel(_ progress: CodexTaskProgress) -> String? {
-        guard !progress.plan.isEmpty else { return nil }
-        if let activeIndex = progress.plan.firstIndex(where: { $0.status == .inProgress }) {
-            return "第 \(activeIndex + 1) / \(progress.plan.count) 步"
-        }
-        if progress.state == .completed {
-            return "第 \(progress.plan.count) / \(progress.plan.count) 步"
-        }
-        let nextStep = min(progress.completedPlanSteps + 1, progress.plan.count)
-        return "第 \(nextStep) / \(progress.plan.count) 步"
-    }
-
-    private func elapsedLabel(_ progress: CodexTaskProgress, now: Date) -> String {
-        let end = progress.completedAt ?? now
-        let seconds = max(0, Int(end.timeIntervalSince(progress.startedAt)))
-        if seconds < 60 { return "运行 \(seconds) 秒" }
-        if seconds < 3_600 { return "运行 \(seconds / 60) 分钟" }
-        return "运行 \(seconds / 3_600) 小时 \((seconds % 3_600) / 60) 分钟"
     }
 }
 
@@ -621,7 +505,8 @@ private struct BottomActionButton: View {
 }
 
 private struct SettingsPanel: View {
-    @Binding var showsTaskProgress: Bool
+    let hookSetupStatus: CodexHookSetupStatus
+    let configureHooks: () -> Void
     @Binding var showsRecentSessions: Bool
     @Binding var showsWeeklyUsage: Bool
     @Binding var showsFiveHourUsage: Bool
@@ -639,9 +524,6 @@ private struct SettingsPanel: View {
 
             ScrollView(.horizontal) {
                 HStack(spacing: 7) {
-                    SettingPill(title: "任务进度", symbol: "figure.run", isSelected: showsTaskProgress) {
-                        showsTaskProgress.toggle()
-                    }
                     SettingPill(title: "最近会话", symbol: "bubble.left.and.bubble.right", isSelected: showsRecentSessions) {
                         showsRecentSessions.toggle()
                     }
@@ -677,6 +559,13 @@ private struct SettingsPanel: View {
 
             ScrollView(.horizontal) {
                 HStack(spacing: 7) {
+                    SettingPill(
+                        title: hookSetupStatus.title,
+                        symbol: "bolt.horizontal.circle",
+                        isSelected: hookSetupStatus.isActive,
+                        usesSelectionMark: hookSetupStatus.isActive,
+                        action: configureHooks
+                    )
                     SettingPill(
                         title: "刷新 \(refreshIntervalLabel)",
                         symbol: "arrow.triangle.2.circlepath",
