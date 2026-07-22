@@ -8,7 +8,7 @@ APP="$STAGING/Codex Monitor.app"
 ASSETS="$DIST/assets"
 ICONSET="$ASSETS/AppIcon.iconset"
 RW_DMG="$DIST/CodexMonitor-rw.dmg"
-FINAL_DMG="$DIST/CodexMonitor-0.4.0.dmg"
+FINAL_DMG="$DIST/CodexMonitor-0.4.1.dmg"
 VOLUME_NAME="Codex Monitor Installer"
 
 rm -rf "$STAGING" "$ASSETS" "$RW_DMG" "$FINAL_DMG"
@@ -65,6 +65,30 @@ for frame_prefix in cat-frame idle-frame thinking-frame waiting-frame; do
     fi
   done
 done
+if [[ -f "$FRAME_DIR/elthen-idle-frame-0.png" ]]; then
+  for entry in \
+    "elthen-idle-frame 0 3" \
+    "elthen-thinking-frame 0 3" \
+    "elthen-working-frame 0 7" \
+    "elthen-waiting-frame 0 5" \
+    "elthen-transition-idle-frame 0 5" \
+    "elthen-transition-thinking-frame 0 5" \
+    "elthen-transition-working-frame 0 5" \
+    "elthen-transition-waiting-frame 0 5"
+  do
+    frame_prefix="${entry%% *}"
+    range="${entry#* }"
+    first_index="${range%% *}"
+    last_index="${range#* }"
+    for ((frame_index = first_index; frame_index <= last_index; frame_index++)); do
+      frame_path="$FRAME_DIR/$frame_prefix-$frame_index.png"
+      if [[ ! -f "$frame_path" ]]; then
+        print -u2 -- "error: missing Elthen animation frame: $frame_path"
+        exit 1
+      fi
+    done
+  done
+fi
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 
 codesign --force --deep --sign - "$APP"

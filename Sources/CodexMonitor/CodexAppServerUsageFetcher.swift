@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 
@@ -5,7 +6,12 @@ import Foundation
 /// in Keychain, missing from auth.json, or no longer usable by the direct path.
 struct CodexAppServerUsageFetcher: Sendable {
     func fetch() async throws -> UsageSnapshot {
-        guard let binaryURL = CodexBinaryLocator.resolve() else {
+        let installedApplications = await MainActor.run {
+            ["com.openai.chat", "com.openai.codex"].compactMap {
+                NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
+            }
+        }
+        guard let binaryURL = CodexBinaryLocator.resolve(applicationURLs: installedApplications) else {
             throw FetchError.codexNotInstalled
         }
 
@@ -31,13 +37,23 @@ struct CodexAppServerUsageFetcher: Sendable {
         }
 
         defer {
-            try? inputPipe.fileHandleForWriting.close()
-            try? outputPipe.fileHandleForReading.close()
             if process.isRunning {
                 process.terminate()
             }
+            process.waitUntilExit()
+            try? inputPipe.fileHandleForWriting.close()
+            try? outputPipe.fileHandleForReading.close()
         }
 
+        let descriptor = outputPipe.fileHandleForReading.fileDescriptor
+        let currentFlags = fcntl(descriptor, F_GETFL)
+        guard currentFlags >= 0,
+              fcntl(descriptor, F_SETFL, currentFlags | O_NONBLOCK) >= 0
+        else {
+            throw FetchError.readFailed
+        }
+
+        var pendingData = Data()
         try send(
             [
                 "id": 1,
@@ -53,6 +69,13 @@ struct CodexAppServerUsageFetcher: Sendable {
             ],
             to: inputPipe.fileHandleForWriting
         )
+        _ = try waitForResult(
+            id: 1,
+            timeout: 8,
+            descriptor: descriptor,
+            process: process,
+            pendingData: &pendingData
+        )
         try send(
             ["method": "initialized", "params": [:]],
             to: inputPipe.fileHandleForWriting
@@ -62,38 +85,57 @@ struct CodexAppServerUsageFetcher: Sendable {
             to: inputPipe.fileHandleForWriting
         )
 
-        let descriptor = outputPipe.fileHandleForReading.fileDescriptor
-        let currentFlags = fcntl(descriptor, F_GETFL)
-        guard currentFlags >= 0,
-              fcntl(descriptor, F_SETFL, currentFlags | O_NONBLOCK) >= 0
-        else {
-            throw FetchError.readFailed
-        }
+        let result = try waitForResult(
+            id: 2,
+            timeout: 5,
+            descriptor: descriptor,
+            process: process,
+            pendingData: &pendingData
+        )
+        let resultData = try JSONSerialization.data(withJSONObject: result)
+        let response = try JSONDecoder().decode(ResultPayload.self, from: resultData)
+        return makeSnapshot(from: response.rateLimits)
+    }
 
-        var pendingData = Data()
-        let deadline = Date().addingTimeInterval(5)
+    private static func waitForResult(
+        id: Int,
+        timeout: TimeInterval,
+        descriptor: Int32,
+        process: Process,
+        pendingData: inout Data
+    ) throws -> [String: Any] {
+        let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if Task.isCancelled { throw CancellationError() }
+
+            if let result = try decodeAvailableLines(id: id, from: &pendingData) {
+                return result
+            }
+
+            var pollDescriptor = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+            let remainingMilliseconds = max(1, min(250, Int32(deadline.timeIntervalSinceNow * 1_000)))
+            let pollResult = poll(&pollDescriptor, 1, remainingMilliseconds)
+            if pollResult < 0 {
+                if errno == EINTR { continue }
+                throw FetchError.readFailed
+            }
+            if pollResult == 0 { continue }
 
             var bytes = [UInt8](repeating: 0, count: 8_192)
             let count = Darwin.read(descriptor, &bytes, bytes.count)
             if count > 0 {
                 pendingData.append(contentsOf: bytes.prefix(count))
-                if let snapshot = try decodeAvailableLines(from: &pendingData) {
-                    return snapshot
-                }
                 continue
             }
-            if count == 0, !process.isRunning {
+            if count == 0 {
                 throw FetchError.processExited
             }
             if count < 0, errno != EAGAIN, errno != EWOULDBLOCK {
                 throw FetchError.readFailed
             }
-            Thread.sleep(forTimeInterval: 0.025)
         }
 
-        throw FetchError.timedOut
+        throw FetchError.timedOut(method: id == 1 ? "initialize" : "account/rateLimits/read")
     }
 
     private static func send(_ payload: [String: Any], to handle: FileHandle) throws {
@@ -102,23 +144,24 @@ struct CodexAppServerUsageFetcher: Sendable {
         try handle.write(contentsOf: data)
     }
 
-    private static func decodeAvailableLines(from data: inout Data) throws -> UsageSnapshot? {
+    static func decodeAvailableLines(id: Int, from data: inout Data) throws -> [String: Any]? {
         while let newline = data.firstIndex(of: 0x0A) {
             let line = Data(data[..<newline])
             data.removeSubrange(...newline)
             guard !line.isEmpty else { continue }
 
-            let response: RPCResponse
-            do {
-                response = try JSONDecoder().decode(RPCResponse.self, from: line)
-            } catch {
-                continue
+            guard let response = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  (response["id"] as? NSNumber)?.intValue == id
+            else { continue }
+            if let error = response["error"] as? [String: Any] {
+                throw FetchError.serverError(
+                    error["message"] as? String ?? "Codex app-server returned an error"
+                )
             }
-            guard response.id == 2 else { continue }
-            guard let limits = response.result?.rateLimits else {
+            guard let result = response["result"] as? [String: Any] else {
                 throw FetchError.invalidResponse
             }
-            return makeSnapshot(from: limits)
+            return result
         }
         return nil
     }
@@ -134,11 +177,6 @@ struct CodexAppServerUsageFetcher: Sendable {
 }
 
 private extension CodexAppServerUsageFetcher {
-    struct RPCResponse: Decodable {
-        let id: Int?
-        let result: ResultPayload?
-    }
-
     struct ResultPayload: Decodable {
         let rateLimits: RateLimits
     }
@@ -164,18 +202,32 @@ private extension CodexAppServerUsageFetcher {
         }
     }
 
-    enum FetchError: Error {
+    enum FetchError: LocalizedError {
         case codexNotInstalled
         case launchFailed
         case processExited
         case readFailed
         case invalidResponse
-        case timedOut
+        case timedOut(method: String)
+        case serverError(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .codexNotInstalled: "没有找到 Codex Desktop 或 Codex CLI"
+            case .launchFailed: "无法启动 Codex 本地服务"
+            case .processExited: "Codex 本地服务提前退出"
+            case .readFailed: "无法读取 Codex 本地服务响应"
+            case .invalidResponse: "Codex 本地服务返回了无效数据"
+            case .timedOut(let method): "Codex 本地服务请求超时（\(method)）"
+            case .serverError(let message): "Codex 本地服务错误：\(message)"
+            }
+        }
     }
 }
 
-private enum CodexBinaryLocator {
+enum CodexBinaryLocator {
     static func resolve(
+        applicationURLs: [URL] = [],
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) -> URL? {
@@ -185,6 +237,10 @@ private enum CodexBinaryLocator {
         if let override = environment["CODEX_BINARY"], !override.isEmpty {
             candidates.append(URL(fileURLWithPath: override))
         }
+
+        candidates.append(contentsOf: applicationURLs.map {
+            $0.appending(path: "Contents/Resources/codex")
+        })
 
         candidates.append(contentsOf: [
             URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"),

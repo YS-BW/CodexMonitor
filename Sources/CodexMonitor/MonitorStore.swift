@@ -133,7 +133,7 @@ final class MonitorStore {
             Self.saveCachedSnapshot(snapshot)
             quotaReadError = nil
         } catch {
-            quotaReadError = "未能读取额度"
+            quotaReadError = error.localizedDescription
         }
 
         do {

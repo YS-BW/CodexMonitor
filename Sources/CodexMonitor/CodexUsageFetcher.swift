@@ -1,20 +1,53 @@
 import Foundation
+import OSLog
 
 struct CodexUsageFetcher: Sendable {
     private static let usageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
+    private static let logger = Logger(subsystem: "com.ysbw.CodexMonitor", category: "Quota")
 
     func fetch() async throws -> UsageSnapshot {
+        var directError: Error?
         do {
             let snapshot = try await fetchDirectly()
             guard snapshot.statusWindow != nil else { throw UsageError.unavailable }
             return snapshot
         } catch {
+            directError = error
+            Self.logger.notice("Direct quota read failed; trying Codex app-server: \(error.localizedDescription, privacy: .public)")
+        }
+
+        do {
             return try await CodexAppServerUsageFetcher().fetch()
+        } catch {
+            Self.logger.error("Codex app-server quota read failed: \(error.localizedDescription, privacy: .public)")
+            throw UsageError.allSourcesFailed(
+                direct: directError?.localizedDescription ?? "unknown",
+                appServer: error.localizedDescription
+            )
         }
     }
 
     private func fetchDirectly() async throws -> UsageSnapshot {
-        let credentials = try loadCredentials()
+        var credentials = try CodexOAuthCredentialsStore.load()
+        if credentials.needsRefresh {
+            do {
+                credentials = try await refreshAndPersist(credentials)
+            } catch {
+                // A refresh timestamp is only a hint. The existing access token
+                // can still be valid, so try it before falling back to RPC.
+                Self.logger.notice("Proactive Codex token refresh failed; trying current token: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        do {
+            return try await fetchDirectly(credentials: credentials)
+        } catch UsageError.unauthorized {
+            credentials = try await refreshAndPersist(credentials)
+            return try await fetchDirectly(credentials: credentials)
+        }
+    }
+
+    private func fetchDirectly(credentials: CodexOAuthCredentials) async throws -> UsageSnapshot {
         var request = URLRequest(url: Self.usageURL)
         request.timeoutInterval = 10
         request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
@@ -23,10 +56,11 @@ struct CodexUsageFetcher: Sendable {
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode) else {
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw UsageError.unavailable
         }
+        if [401, 403].contains(httpResponse.statusCode) { throw UsageError.unauthorized }
+        guard (200..<300).contains(httpResponse.statusCode) else { throw UsageError.unavailable }
 
         let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
         let windows = [usage.rateLimit?.primaryWindow, usage.rateLimit?.secondaryWindow].compactMap { $0 }
@@ -35,25 +69,14 @@ struct CodexUsageFetcher: Sendable {
         return UsageSnapshot(current: current, weekly: weekly)
     }
 
-    private func loadCredentials() throws -> Credentials {
-        let authURL = codexHomeURL().appending(path: "auth.json")
-        let data = try Data(contentsOf: authURL)
-        let auth = try JSONDecoder().decode(AuthFile.self, from: data)
-        guard let accessToken = auth.tokens?.accessToken, !accessToken.isEmpty else {
-            throw UsageError.notSignedIn
+    private func refreshAndPersist(_ credentials: CodexOAuthCredentials) async throws -> CodexOAuthCredentials {
+        let refreshed = try await CodexOAuthTokenRefresher.refresh(credentials)
+        do {
+            try CodexOAuthCredentialsStore.save(refreshed)
+        } catch {
+            Self.logger.error("Refreshed Codex token but could not persist it: \(error.localizedDescription, privacy: .public)")
         }
-        return Credentials(accessToken: accessToken, accountID: auth.tokens?.accountID)
-    }
-
-    private func codexHomeURL() -> URL {
-        if let configuredHome = ProcessInfo.processInfo.environment["CODEX_HOME"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !configuredHome.isEmpty
-        {
-            return URL(fileURLWithPath: configuredHome, isDirectory: true)
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: ".codex", directoryHint: .isDirectory)
+        return refreshed
     }
 
     private func makeCurrentWindow(_ window: RateWindow) -> UsageWindow {
@@ -66,25 +89,6 @@ struct CodexUsageFetcher: Sendable {
 }
 
 private extension CodexUsageFetcher {
-    struct Credentials: Sendable {
-        let accessToken: String
-        let accountID: String?
-    }
-
-    struct AuthFile: Decodable {
-        let tokens: Tokens?
-
-        struct Tokens: Decodable {
-            let accessToken: String?
-            let accountID: String?
-
-            enum CodingKeys: String, CodingKey {
-                case accessToken = "access_token"
-                case accountID = "account_id"
-            }
-        }
-    }
-
     struct UsageResponse: Decodable {
         let rateLimit: RateLimit?
 
@@ -118,9 +122,19 @@ private extension CodexUsageFetcher {
         var resetDate: Date { Date(timeIntervalSince1970: resetAt) }
     }
 
-    enum UsageError: Error {
-        case notSignedIn
+    enum UsageError: LocalizedError {
         case unavailable
+        case unauthorized
+        case allSourcesFailed(direct: String, appServer: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable: "额度服务暂时不可用"
+            case .unauthorized: "Codex 登录已过期"
+            case .allSourcesFailed(let direct, let appServer):
+                "额度读取失败（直连：\(direct)；本地接口：\(appServer)）"
+            }
+        }
     }
 }
 

@@ -49,8 +49,9 @@ Source: https://github.com/runcat-dev/RunCatNeo
 
 ## Elthen 2D Pixel Art Cat Sprites
 
-The cat status animation included in packaged releases is adapted from
-"2D Pixel Art Cat Sprites" by Elthen's Pixel Art Shop.
+The cat status animation included in packaged releases, including the
+additional generated transition frames, is adapted from "2D Pixel Art Cat
+Sprites" by Elthen's Pixel Art Shop.
 
 The author permits use and modification in personal and commercial projects.
 The assets, including modified versions, may not be resold or redistributed as

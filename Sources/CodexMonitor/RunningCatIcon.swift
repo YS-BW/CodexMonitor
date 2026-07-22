@@ -54,7 +54,8 @@ struct CatStatusIcon: NSViewRepresentable {
 }
 
 final class CatStatusAnimationView: NSView {
-    private static let transitionDuration: TimeInterval = 0.22
+    private static let fallbackTransitionDuration: TimeInterval = 0.22
+    private static let transitionFrameDuration: TimeInterval = 0.055
     private let tintLayer = CALayer()
     private let frameLayer = CALayer()
     private var state: CatActivityState?
@@ -117,10 +118,11 @@ final class CatStatusAnimationView: NSView {
             return
         }
 
-        playTransition(from: previousFrame, to: nextFrame)
+        let transitionFrames = Self.loadFrames(prefix: "elthen-transition-\(newState.rawValue)-frame")
+        let duration = playTransition(from: previousFrame, to: nextFrame, transitionFrames: transitionFrames)
         let expectedState = newState
         transitionTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(Self.transitionDuration))
+            try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled, self?.state == expectedState else { return }
             self?.startAnimating(duration: expectedState.animationDuration)
         }
@@ -146,7 +148,30 @@ final class CatStatusAnimationView: NSView {
         frameLayer.removeAnimation(forKey: "cat-transition")
     }
 
-    private func playTransition(from previousFrame: CGImage, to nextFrame: CGImage) {
+    @discardableResult
+    private func playTransition(
+        from previousFrame: CGImage,
+        to nextFrame: CGImage,
+        transitionFrames: [CGImage]
+    ) -> TimeInterval {
+        guard !transitionFrames.isEmpty else {
+            playFallbackTransition(from: previousFrame, to: nextFrame)
+            return Self.fallbackTransitionDuration
+        }
+
+        let transitionValues = [previousFrame] + transitionFrames + [nextFrame]
+        frameLayer.contents = nextFrame
+
+        let contents = CAKeyframeAnimation(keyPath: "contents")
+        contents.values = transitionValues
+        contents.calculationMode = .discrete
+        contents.duration = TimeInterval(transitionValues.count) * Self.transitionFrameDuration
+        contents.timingFunction = CAMediaTimingFunction(name: .linear)
+        frameLayer.add(contents, forKey: "cat-transition")
+        return contents.duration
+    }
+
+    private func playFallbackTransition(from previousFrame: CGImage, to nextFrame: CGImage) {
         frameLayer.contents = nextFrame
 
         let contents = CAKeyframeAnimation(keyPath: "contents")
@@ -166,7 +191,7 @@ final class CatStatusAnimationView: NSView {
 
         let transition = CAAnimationGroup()
         transition.animations = [contents, scale, opacity]
-        transition.duration = Self.transitionDuration
+        transition.duration = Self.fallbackTransitionDuration
         transition.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         frameLayer.add(transition, forKey: "cat-transition")
     }
