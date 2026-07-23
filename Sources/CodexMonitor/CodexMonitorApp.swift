@@ -5,44 +5,32 @@ import SwiftUI
 private enum LegacyDefaultsMigration {
     private static let temporaryMenuBarDomain = "com.ysbw.CodexMonitor.MenuBar"
     private static let migrationKey = "didMigrateTemporaryMenuBarDefaultsV1"
+    private static let cleanedAutosaveKey = "didCleanAutosaveDefaultsV1"
 
     static func runIfNeeded() {
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: migrationKey) else { return }
-
-        if let temporaryValues = defaults.persistentDomain(forName: temporaryMenuBarDomain) {
-            for (key, value) in temporaryValues where !key.hasPrefix("NSStatusItem ") {
-                guard defaults.object(forKey: key) == nil else { continue }
-                defaults.set(value, forKey: key)
+        if !defaults.bool(forKey: migrationKey) {
+            if let temporaryValues = defaults.persistentDomain(forName: temporaryMenuBarDomain) {
+                for (key, value) in temporaryValues where !key.hasPrefix("NSStatusItem ") {
+                    guard defaults.object(forKey: key) == nil else { continue }
+                    defaults.set(value, forKey: key)
+                }
             }
+            defaults.set(true, forKey: migrationKey)
         }
-        defaults.set(true, forKey: migrationKey)
-    }
-}
 
-@MainActor
-private enum StatusItemPlacement {
-    static let autosaveName = "codex-monitor-main"
-    private static let positionPrefix = "NSStatusItem Preferred Position "
-    private static let visiblePrefix = "NSStatusItem VisibleCC "
-    private static let preparedKey = "didPrepareStatusItemPlacementV2"
-
-    static func prepare(defaults: UserDefaults) {
-        guard !defaults.bool(forKey: preparedKey) else { return }
-        let positionKey = positionPrefix + autosaveName
-        if let value = defaults.object(forKey: positionKey) as? NSNumber {
-            let maximum = NSScreen.screens.map { $0.frame.maxX }.max() ?? 0
-            if value.doubleValue <= 0 || (maximum > 0 && value.doubleValue > maximum + 512) {
-                defaults.removeObject(forKey: positionKey)
+        // Remove legacy autosaveName side effects from earlier versions.
+        // Without autosaveName the OS can't silently hide the item via
+        // Control Center on macOS 26 for unnotarized apps.
+        if !defaults.bool(forKey: cleanedAutosaveKey) {
+            for key in defaults.dictionaryRepresentation().keys {
+                if key.hasPrefix("NSStatusItem ") {
+                    defaults.removeObject(forKey: key)
+                }
             }
-        } else {
-            defaults.set(700.0, forKey: positionKey)
+            defaults.removeObject(forKey: "didPrepareStatusItemPlacementV2")
+            defaults.set(true, forKey: cleanedAutosaveKey)
         }
-        let visibleKey = visiblePrefix + autosaveName
-        if (defaults.object(forKey: visibleKey) as? NSNumber)?.boolValue == false {
-            defaults.removeObject(forKey: visibleKey)
-        }
-        defaults.set(true, forKey: preparedKey)
     }
 }
 
@@ -64,7 +52,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
         LegacyDefaultsMigration.runIfNeeded()
-        StatusItemPlacement.prepare(defaults: .standard)
         // Let AppKit finish constructing the menu bar before creating the
         // status item; creating it during applicationDidFinishLaunching can
         // leave its window at y=-6 instead of inside the menu bar.
@@ -157,11 +144,12 @@ private final class StatusBarController: NSObject, NSPopoverDelegate {
     private var statusHostingView: PassthroughHostingView<StatusLabel>?
     private var lastPopoverCloseAt = Date.distantPast
 
+    // Not using autosaveName: on macOS 26, the system's Control Center
+    // persistence can silently hide status items of unnotarized apps.  We
+    // rely on explicit `isVisible = true` only.
     init(store: MonitorStore) {
         self.store = store
-        StatusItemPlacement.prepare(defaults: .standard)
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        self.statusItem.autosaveName = StatusItemPlacement.autosaveName
         self.statusItem.isVisible = true
         super.init()
         configureStatusItem()
