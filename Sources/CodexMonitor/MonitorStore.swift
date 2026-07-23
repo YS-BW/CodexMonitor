@@ -29,6 +29,7 @@ final class MonitorStore {
     private var dogStateRevision = 0
     private var refreshIntervalMinutes: Int?
     private let hookStateMonitor = CodexHookStateMonitor()
+    private let transcriptTerminalMonitor = CodexTranscriptTerminalMonitor()
     private static let snapshotCacheKey = "cachedUsageSnapshot"
     private static let moduleOrderKey = "dashboardModuleOrder"
 
@@ -45,14 +46,25 @@ final class MonitorStore {
     private func startHookMonitoring() {
         hookSnapshot = CodexHookStateStore.read()
         hookSetupStatus = CodexHookInstaller.localStatus
+        transcriptTerminalMonitor.onTerminal = { terminal in
+            _ = try? CodexHookStateStore.removeTask(
+                sessionID: terminal.sessionID,
+                turnID: terminal.turnID
+            )
+        }
         hookStateMonitor.onChange = { [weak self] snapshot in
             Task { @MainActor [weak self] in
-                self?.hookSnapshot = snapshot
-                self?.scheduleDogStateRefresh(for: snapshot)
+                self?.applyHookSnapshot(snapshot)
             }
         }
         hookStateMonitor.start()
-        scheduleDogStateRefresh(for: hookSnapshot)
+        applyHookSnapshot(hookSnapshot)
+    }
+
+    private func applyHookSnapshot(_ snapshot: CodexHookSnapshot) {
+        hookSnapshot = snapshot
+        transcriptTerminalMonitor.synchronize(tasks: Array(snapshot.tasks.values))
+        scheduleDogStateRefresh(for: snapshot)
     }
 
     var dogActivityState: DogActivityState {
@@ -68,19 +80,35 @@ final class MonitorStore {
     private func scheduleDogStateRefresh(for snapshot: CodexHookSnapshot) {
         dogStateRefreshTask?.cancel()
         dogStateRefreshTask = nil
-        guard !snapshot.tasks.isEmpty, let lastPromptAt = snapshot.lastPromptAt else { return }
+        guard !snapshot.tasks.isEmpty else { return }
 
-        let deadline = lastPromptAt.addingTimeInterval(
-            CodexHookSnapshot.minimumThinkingDisplayDuration
-        )
-        let remaining = deadline.timeIntervalSinceNow
-        guard remaining > 0 else { return }
+        let now = Date.now
+        var deadlines: [Date] = []
+        if let lastPromptAt = snapshot.lastPromptAt {
+            let thinkingDeadline = lastPromptAt.addingTimeInterval(
+                CodexHookSnapshot.minimumThinkingDisplayDuration
+            )
+            if thinkingDeadline > now {
+                deadlines.append(thinkingDeadline)
+            }
+        }
+        if let expiration = snapshot.nextTaskExpiration(after: now) {
+            deadlines.append(expiration)
+        }
+        guard let deadline = deadlines.min() else { return }
 
         dogStateRefreshTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(remaining))
-            guard !Task.isCancelled, let self else { return }
-            dogStateRevision += 1
+            do {
+                try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+            } catch {
+                return
+            }
+            guard let self else { return }
             dogStateRefreshTask = nil
+            hookSnapshot.pruneStaleTasks()
+            transcriptTerminalMonitor.synchronize(tasks: Array(hookSnapshot.tasks.values))
+            dogStateRevision += 1
+            scheduleDogStateRefresh(for: hookSnapshot)
         }
     }
 

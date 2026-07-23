@@ -234,3 +234,111 @@ import Testing
     #expect(snapshot.tasks.values.contains(where: { $0.sessionID == "old" }) == false)
     #expect(snapshot.tasks.values.contains(where: { $0.sessionID == "other" }))
 }
+
+@Test func staleTasksAreInactiveWithoutAnotherHookEvent() {
+    let startedAt = Date(timeIntervalSince1970: 10_000)
+    var snapshot = CodexHookSnapshot()
+    snapshot.apply(
+        CodexHookEvent(name: "UserPromptSubmit", sessionID: "session", turnID: "turn"),
+        now: startedAt
+    )
+
+    let beforeExpiry = startedAt.addingTimeInterval(CodexHookSnapshot.staleTaskDuration - 1)
+    let atExpiry = startedAt.addingTimeInterval(CodexHookSnapshot.staleTaskDuration)
+    let afterExpiry = startedAt.addingTimeInterval(CodexHookSnapshot.staleTaskDuration + 1)
+    #expect(snapshot.effectiveStatus(at: beforeExpiry) == .thinking)
+    #expect(snapshot.effectiveStatus(at: atExpiry) == nil)
+    #expect(snapshot.effectiveStatus(at: afterExpiry) == nil)
+    #expect(snapshot.nextTaskExpiration(after: startedAt) == startedAt.addingTimeInterval(CodexHookSnapshot.staleTaskDuration))
+}
+
+@Test func readingStatePrunesExpiredTasksAndOldSchemaStillDecodes() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let stateURL = directory.appending(path: "state.json")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let updatedAt = Date(timeIntervalSince1970: 20_000)
+    let json = """
+    {
+      "version": 1,
+      "updatedAt": "1970-01-01T05:33:20Z",
+      "lastEventName": "UserPromptSubmit",
+      "lastPromptAt": "1970-01-01T05:33:20Z",
+      "tasks": {
+        "session:turn": {
+          "sessionID": "session",
+          "turnID": "turn",
+          "status": "thinking",
+          "updatedAt": "1970-01-01T05:33:20Z",
+          "activeWorkIDs": []
+        }
+      }
+    }
+    """
+    try Data(json.utf8).write(to: stateURL)
+
+    let live = CodexHookStateStore.read(from: stateURL, now: updatedAt)
+    #expect(live.tasks["session:turn"]?.transcriptPath == nil)
+    let expired = CodexHookStateStore.read(
+        from: stateURL,
+        now: updatedAt.addingTimeInterval(CodexHookSnapshot.staleTaskDuration + 1)
+    )
+    #expect(expired.tasks.isEmpty)
+    #expect(expired.effectiveStatus == nil)
+}
+
+@Test func transcriptPathIsDecodedAndRetainedAcrossEvents() {
+    let input = Data(#"{"hook_event_name":"UserPromptSubmit","session_id":"session","turn_id":"turn","transcript_path":"/tmp/session.jsonl"}"#.utf8)
+    let event = CodexHookEvent.decode(input)
+    var snapshot = CodexHookSnapshot()
+    snapshot.apply(event, now: Date(timeIntervalSince1970: 30_000))
+    snapshot.apply(
+        CodexHookEvent(
+            name: "PreToolUse",
+            sessionID: "session",
+            turnID: "turn",
+            toolUseID: "tool"
+        ),
+        now: Date(timeIntervalSince1970: 30_001)
+    )
+
+    #expect(snapshot.tasks["session:turn"]?.transcriptPath == "/tmp/session.jsonl")
+}
+
+@Test func terminalRemovalTargetsOnlyTheMatchingTurn() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let stateURL = directory.appending(path: "state.json")
+    for (session, turn) in [("aborted", "a"), ("completed", "b")] {
+        try CodexHookStateStore.apply(
+            event: CodexHookEvent(name: "UserPromptSubmit", sessionID: session, turnID: turn),
+            to: stateURL
+        )
+    }
+    try CodexHookStateStore.apply(
+        event: CodexHookEvent(name: "Stop", sessionID: "completed", turnID: "b"),
+        to: stateURL
+    )
+    #expect(try CodexHookStateStore.removeTask(sessionID: "aborted", turnID: "wrong", from: stateURL) == false)
+    #expect(CodexHookStateStore.read(from: stateURL).tasks.count == 1)
+    #expect(try CodexHookStateStore.removeTask(sessionID: "aborted", turnID: "a", from: stateURL))
+    #expect(CodexHookStateStore.read(from: stateURL).tasks.isEmpty)
+}
+
+@Test func sessionEndClearsOnlyItsSession() {
+    let startedAt = Date(timeIntervalSince1970: 40_000)
+    var snapshot = CodexHookSnapshot()
+    for session in ["ended", "other"] {
+        snapshot.apply(
+            CodexHookEvent(name: "UserPromptSubmit", sessionID: session, turnID: "turn"),
+            now: startedAt
+        )
+    }
+    snapshot.apply(
+        CodexHookEvent(name: "SessionEnd", sessionID: "ended", turnID: nil),
+        now: startedAt.addingTimeInterval(1)
+    )
+
+    #expect(snapshot.tasks.values.contains(where: { $0.sessionID == "ended" }) == false)
+    #expect(snapshot.tasks.values.contains(where: { $0.sessionID == "other" }))
+}
